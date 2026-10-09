@@ -6,8 +6,6 @@ import tomllib
 import urllib.request
 from pathlib import Path
 
-os.environ.setdefault("GLOG_minloglevel", "2")  # silence MediaPipe's startup chatter
-
 DATA = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "wavebind"
 MODEL = DATA / "gesture_recognizer.task"
 PORTAL_TOKEN = DATA / "portal_token"
@@ -107,7 +105,7 @@ def run(args):
     except (TypeError, ValueError) as e:
         sys.exit(f"bad config {path}: {e}")
     print(f"config {path}\nhold an open palm to arm, then make a gesture. {'q in the window' if args.preview else 'Ctrl+C'} quits.")
-    fired, fired_at, was_armed = None, 0, False
+    fired, fired_at, was_armed, window_open = None, 0, False, False
     try:
         for now, label, x, frame, hand in vision.stream(MODEL, args.camera, cfg.get("fps", 15), cfg.get("idle_fps", 5)):
             gesture = eng.update(swipe.update(x if eng.armed else None, now) or label, now)
@@ -123,7 +121,14 @@ def run(args):
                     print(f"{gesture} failed: {e}", file=sys.stderr)
             if args.preview:
                 shown = fired if now - fired_at < 1.5 else None
-                cv2.imshow("wavebind", vision.draw(frame, hand, label, eng.state(now), shown))
+                image = vision.draw(frame, hand, label, eng.state(now), shown)
+                if window_open:
+                    cv2.imshow("wavebind", image)
+                else:
+                    with vision.quiet_stderr():  # Qt prints XWayland and missing-font warnings on window creation
+                        cv2.imshow("wavebind", image)
+                        cv2.waitKey(1)
+                    window_open = True
                 if cv2.waitKey(1) & 0xFF in (ord("q"), 27) or cv2.getWindowProperty("wavebind", cv2.WND_PROP_VISIBLE) < 1:
                     break  # q, Esc, or the window was closed
     except KeyboardInterrupt:

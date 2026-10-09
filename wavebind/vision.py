@@ -1,9 +1,27 @@
 """Camera -> MediaPipe GestureRecognizer -> (label, wrist x, frame, landmarks) per frame."""
+import contextlib
+import os
+import sys
 import time
 
 import cv2
+import numpy as np
 import mediapipe as mp
 from mediapipe.tasks.python import BaseOptions, vision
+
+
+@contextlib.contextmanager
+def quiet_stderr():
+    """Mute fd 2. MediaPipe's C++ logging and Qt's startup warnings ignore env vars and Python's sys.stderr."""
+    sys.stderr.flush()
+    saved, devnull = os.dup(2), os.open(os.devnull, os.O_WRONLY)
+    os.dup2(devnull, 2)
+    os.close(devnull)
+    try:
+        yield
+    finally:
+        os.dup2(saved, 2)
+        os.close(saved)
 
 
 def stream(model, camera=0, fps=15, idle_fps=5):
@@ -16,8 +34,11 @@ def stream(model, camera=0, fps=15, idle_fps=5):
     options = vision.GestureRecognizerOptions(
         base_options=BaseOptions(model_asset_path=str(model)), running_mode=vision.RunningMode.VIDEO
     )
-    last_ms, next_at, interval = -1, 0.0, 1 / idle_fps
-    with vision.GestureRecognizer.create_from_options(options) as rec:
+    last_ms, next_at, interval = 0, 0.0, 1 / idle_fps
+    with quiet_stderr():  # model load and first inference are where all the log spam happens
+        rec = vision.GestureRecognizer.create_from_options(options)
+        rec.recognize_for_video(mp.Image(image_format=mp.ImageFormat.SRGB, data=np.zeros((480, 640, 3), np.uint8)), 0)
+    with rec:
         try:
             while True:
                 if not cap.grab():
