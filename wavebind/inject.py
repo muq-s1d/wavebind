@@ -1,7 +1,8 @@
-"""Press keys on the desktop. One backend per session type, picked by detect()."""
+"""Run gesture actions: shell commands, media control (MPRIS), key presses."""
 import ctypes
 import itertools
 import os
+import shlex
 import shutil
 import subprocess
 
@@ -39,18 +40,22 @@ class Wtype:
 
 
 class Portal:
-    """xdg-desktop-portal RemoteDesktop (GNOME, KDE). Asks permission once, then reuses a restore token."""
+    """xdg-desktop-portal RemoteDesktop (GNOME, KDE), keyboard only.
+
+    remember=False: GNOME/KDE asks every launch, nothing is stored.
+    remember=True: the grant is saved as a restore token (mode 0600) and reused until revoked.
+    """
 
     name = "xdg-desktop-portal RemoteDesktop"
     IFACE = "org.freedesktop.portal.RemoteDesktop"
 
-    def __init__(self, token_file, timeout=60):
+    def __init__(self, token_file, remember=False, timeout=60):
         from jeepney import DBusAddress
         from jeepney.io.blocking import open_dbus_connection
 
         self.conn = open_dbus_connection(bus="SESSION")
         self.addr = DBusAddress("/org/freedesktop/portal/desktop", "org.freedesktop.portal.Desktop", self.IFACE)
-        self.token_file, self.timeout = token_file, timeout
+        self.token_file, self.remember, self.timeout = token_file, remember, timeout
         self.tokens = itertools.count()
         self.session = None
 
@@ -85,13 +90,17 @@ class Portal:
     def start(self):
         res = self._request("CreateSession", "a{sv}", session_handle_token=("s", "wavebind"))
         self.session = res["session_handle"]
-        opts = {"types": ("u", 1), "persist_mode": ("u", 2)}  # 1 = keyboard, 2 = remember until revoked
-        if self.token_file.exists():
+        opts = {"types": ("u", 1), "persist_mode": ("u", 2 if self.remember else 0)}  # 1 = keyboard only
+        if not self.remember:
+            self.token_file.unlink(missing_ok=True)
+        elif self.token_file.exists():
             opts["restore_token"] = ("s", self.token_file.read_text().strip())
         self._request("SelectDevices", "oa{sv}", self.session, **opts)
         res = self._request("Start", "osa{sv}", self.session, "")
-        if "restore_token" in res:  # tokens are single-use, save the fresh one every time
+        if self.remember and "restore_token" in res:  # tokens are single-use, save the fresh one every time
             self.token_file.parent.mkdir(parents=True, exist_ok=True)
+            self.token_file.touch(mode=0o600)
+            self.token_file.chmod(0o600)  # touch() leaves an existing file's mode alone
             self.token_file.write_text(res["restore_token"])
 
     def press(self, keys):
@@ -106,11 +115,65 @@ class Portal:
                 self.conn.send_and_get_reply(msg)
 
 
-def detect(token_file):
+def detect(token_file, remember=False):
     """Return the best key backend for this session, or None."""
     if os.environ.get("XDG_SESSION_TYPE") == "x11" or not os.environ.get("WAYLAND_DISPLAY"):
         return Xdotool() if shutil.which("xdotool") else None
-    portal = Portal(token_file)
+    portal = Portal(token_file, remember)
     if portal.available():
         return portal
     return Wtype() if shutil.which("wtype") else None
+
+
+MEDIA = {"PlayPause", "Next", "Previous", "Stop"}
+
+
+def media(method):
+    """MPRIS over DBus: control the playing player, else the first one. No permission needed."""
+    from jeepney import DBusAddress, Properties, message_bus, new_method_call
+    from jeepney.io.blocking import Proxy, open_dbus_connection
+
+    with open_dbus_connection(bus="SESSION") as conn:
+        names = [n for n in Proxy(message_bus, conn).ListNames()[0] if n.startswith("org.mpris.MediaPlayer2.")]
+        if not names:
+            raise RuntimeError("no media player running")
+        player = lambda n: DBusAddress("/org/mpris/MediaPlayer2", n, "org.mpris.MediaPlayer2.Player")
+        playing = lambda n: conn.send_and_get_reply(Properties(player(n)).get("PlaybackStatus")).body[0][1] == "Playing"
+        target = next((n for n in names if playing(n)), names[0])
+        conn.send_and_get_reply(new_method_call(player(target), method))
+
+
+def validate(bindings):
+    for gesture, b in bindings.items():
+        if len(b) != 1 or not set(b) <= {"cmd", "media", "keys"}:
+            raise ValueError(f"binding {gesture}: needs exactly one of cmd, media, keys")
+        if "keys" in b:
+            for k in parse_keys(b["keys"]):
+                keysym(k)
+        if "media" in b and b["media"] not in MEDIA:
+            raise ValueError(f"binding {gesture}: media must be one of {sorted(MEDIA)}")
+
+
+class Actions:
+    """Runs bindings. The key backend (and any permission prompt) is only touched when a `keys` binding fires."""
+
+    def __init__(self, bindings, token_file, remember=False):
+        validate(bindings)
+        self.bindings, self.token_file, self.remember = bindings, token_file, remember
+        self.backend = None
+
+    def fire(self, gesture):
+        b = self.bindings.get(gesture)
+        if b is None:
+            return False
+        if "cmd" in b:
+            subprocess.run(shlex.split(b["cmd"]), check=True, timeout=5)
+        elif "media" in b:
+            media(b["media"])
+        else:
+            if self.backend is None:
+                self.backend = detect(self.token_file, self.remember)
+                if self.backend is None:
+                    raise RuntimeError("no key backend: install xdotool (X11) or wtype (wlroots)")
+            self.backend.press(parse_keys(b["keys"]))
+        return True

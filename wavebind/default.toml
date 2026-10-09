@@ -1,0 +1,20 @@
+# wavebind config. Copy to ~/.config/wavebind/config.toml to customize.
+#
+# Each binding is exactly one of:
+#   cmd   = "a command"      run directly, no shell
+#   media = "PlayPause"      PlayPause, Next, Previous or Stop on the active media player
+#   keys  = "super+Page_Down" press a key combo (X keysym names; super/ctrl/alt/shift aliases)
+#
+# Only `keys` bindings need key-press permission. On GNOME/KDE that is the
+# xdg-desktop-portal RemoteDesktop dialog, asked the first time a `keys` binding fires.
+
+# false: ask for key-press permission every launch, store nothing.
+# true:  remember the grant (token saved with mode 0600) until revoked in Settings.
+remember_key_permission = false
+
+[bindings]
+swipe_left = { keys = "super+Page_Up" }      # GNOME: previous workspace
+swipe_right = { keys = "super+Page_Down" }   # GNOME: next workspace
+Closed_Fist = { media = "PlayPause" }
+Thumb_Up = { cmd = "wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 5%+" }
+Thumb_Down = { cmd = "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-" }
