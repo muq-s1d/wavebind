@@ -3,7 +3,7 @@ import tomllib
 import unittest
 from pathlib import Path
 
-from wavebind import inject
+from wavebind import engine, inject
 
 
 class Keys(unittest.TestCase):
@@ -80,6 +80,75 @@ class PortalToken(unittest.TestCase):
             self.assertEqual(opts["restore_token"], ("s", "OLD"))
             self.assertEqual(token.read_text(), "NEW")
             self.assertEqual(token.stat().st_mode & 0o777, 0o600)
+
+
+
+def feed(eng, frames, t=0.0, dt=0.1):
+    """Feed labels one frame every dt s; return (fired gestures, end time)."""
+    fired = []
+    for label in frames:
+        g = eng.update(label, t)
+        if g:
+            fired.append(g)
+        t += dt
+    return fired, t
+
+
+class EngineTest(unittest.TestCase):
+    def make(self):
+        return engine.Engine({"Closed_Fist", "swipe_left"})  # defaults: hold 0.5 s, armed 2 s, cooldown 1 s, 3 frames
+
+    def test_nothing_fires_unarmed(self):
+        fired, _ = feed(self.make(), ["Closed_Fist"] * 20)
+        self.assertEqual(fired, [])
+
+    def test_arm_then_fire_once(self):
+        eng = self.make()
+        fired, t = feed(eng, ["Open_Palm"] * 6)  # t=0.0..0.5 -> armed at 0.5
+        self.assertTrue(eng.armed)
+        fired, t = feed(eng, ["Closed_Fist"] * 2, t)
+        self.assertEqual(fired, [])  # 2 frames < stable_frames
+        fired, t = feed(eng, ["Closed_Fist"] * 10, t)
+        self.assertEqual(fired, ["Closed_Fist"])  # once, not 10 times
+        self.assertEqual(eng.state(t), "idle")  # cooldown over after 1 s of frames
+
+    def test_short_palm_does_not_arm(self):
+        eng = self.make()
+        feed(eng, ["Open_Palm"] * 5 + [None] + ["Open_Palm"] * 5)  # 0.4 s, gap, 0.4 s
+        self.assertFalse(eng.armed)
+
+    def test_unbound_and_expiry(self):
+        eng = self.make()
+        _, t = feed(eng, ["Open_Palm"] * 6)
+        fired, t = feed(eng, ["Victory"] * 5, t)  # not bound
+        self.assertEqual(fired, [])
+        fired, t = feed(eng, [None] * 20, t)  # 2 s passes, arming expires
+        fired, t = feed(eng, ["Closed_Fist"] * 5, t)
+        self.assertEqual(fired, [])
+
+    def test_swipe_fires_immediately(self):
+        eng = self.make()
+        _, t = feed(eng, ["Open_Palm"] * 6)
+        self.assertEqual(eng.update("swipe_left", t), "swipe_left")
+
+
+class SwipeTest(unittest.TestCase):
+    def test_directions(self):
+        for xs, want in (([0.3, 0.45, 0.6], "swipe_left"), ([0.7, 0.55, 0.4], "swipe_right")):
+            sw = engine.Swipe()
+            got = [sw.update(x, i * 0.1) for i, x in enumerate(xs)]
+            self.assertEqual(got[-1], want, xs)
+
+    def test_slow_drift_is_not_a_swipe(self):
+        sw = engine.Swipe()
+        got = [sw.update(0.3 + i * 0.02, i * 0.1) for i in range(20)]  # 0.38 total over 2 s
+        self.assertEqual([g for g in got if g], [])
+
+    def test_hand_lost_resets(self):
+        sw = engine.Swipe()
+        sw.update(0.3, 0.0)
+        sw.update(None, 0.1)
+        self.assertIsNone(sw.update(0.6, 0.2))
 
 
 if __name__ == "__main__":

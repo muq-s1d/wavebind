@@ -6,8 +6,6 @@ import tomllib
 import urllib.request
 from pathlib import Path
 
-os.environ.setdefault("GLOG_minloglevel", "2")  # silence MediaPipe's startup chatter
-
 DATA = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "wavebind"
 MODEL = DATA / "gesture_recognizer.task"
 PORTAL_TOKEN = DATA / "portal_token"
@@ -27,10 +25,9 @@ def load_config():
     return path, tomllib.loads(path.read_text())
 
 
-def actions():
+def actions(cfg):
     from . import inject
 
-    _, cfg = load_config()
     return inject.Actions(cfg["bindings"], PORTAL_TOKEN, cfg.get("remember_key_permission", False))
 
 
@@ -84,16 +81,67 @@ def check(args):
 def fire(args):
     """Run one binding by name, no camera. Handy for testing a config."""
     try:
-        if not actions().fire(args.gesture):
+        if not actions(load_config()[1]).fire(args.gesture):
             sys.exit(f"no binding for {args.gesture}")
     except Exception as e:
         sys.exit(f"{args.gesture} failed: {e}")
     print(f"{args.gesture} done")
 
 
+def run(args):
+    if args.preview:
+        os.environ.setdefault("QT_QPA_PLATFORM", "xcb")  # pip OpenCV's Qt only ships the X11 plugin (XWayland)
+    import cv2
+
+    from . import engine, vision
+
+    if not MODEL.exists():
+        sys.exit("model missing, run: wavebind setup")
+    path, cfg = load_config()
+    try:
+        act = actions(cfg)
+        eng = engine.Engine(cfg["bindings"], **cfg.get("engine", {}))
+        swipe = engine.Swipe(**cfg.get("swipe", {}))
+    except (TypeError, ValueError) as e:
+        sys.exit(f"bad config {path}: {e}")
+    print(f"config {path}\nhold an open palm to arm, then make a gesture. {'q in the window' if args.preview else 'Ctrl+C'} quits.")
+    fired, fired_at, was_armed, window_open = None, 0, False, False
+    try:
+        for now, label, x, frame, hand in vision.stream(MODEL, args.camera, cfg.get("fps", 15), cfg.get("idle_fps", 5)):
+            gesture = eng.update(swipe.update(x if eng.armed else None, now) or label, now)
+            if eng.armed and not was_armed:
+                print("armed")
+            was_armed = eng.armed
+            if gesture:
+                fired, fired_at = gesture, now
+                try:
+                    act.fire(gesture)
+                    print(f"fired {gesture}")
+                except Exception as e:
+                    print(f"{gesture} failed: {e}", file=sys.stderr)
+            if args.preview:
+                shown = fired if now - fired_at < 1.5 else None
+                image = vision.draw(frame, hand, label, eng.state(now), shown)
+                if window_open:
+                    cv2.imshow("wavebind", image)
+                else:
+                    with vision.quiet_stderr():  # Qt prints XWayland and missing-font warnings on window creation
+                        cv2.imshow("wavebind", image)
+                        cv2.waitKey(1)
+                    window_open = True
+                if cv2.waitKey(1) & 0xFF in (ord("q"), 27) or cv2.getWindowProperty("wavebind", cv2.WND_PROP_VISIBLE) < 1:
+                    break  # q, Esc, or the window was closed
+    except KeyboardInterrupt:
+        pass
+
+
 def main():
     p = argparse.ArgumentParser(prog="wavebind", description="Bind webcam hand gestures to desktop actions.")
     sub = p.add_subparsers(required=True)
+    r = sub.add_parser("run", help="watch the camera and fire bindings")
+    r.add_argument("--camera", type=int, default=0, help="camera index (default 0)")
+    r.add_argument("--preview", action="store_true", help="show the camera with landmarks and state")
+    r.set_defaults(func=run)
     sub.add_parser("setup", help="download the gesture model (one time)").set_defaults(func=setup)
     c = sub.add_parser("check", help="test model, camera and key backend")
     c.add_argument("--camera", type=int, default=0, help="camera index (default 0)")
