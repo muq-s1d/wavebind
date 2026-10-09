@@ -76,6 +76,6 @@ def draw(frame, hand, label, state, fired=None):
         cv2.circle(img, (int((1 - p.x) * w), int(p.y * h)), 3, color, -1)
     cv2.rectangle(img, (0, 0), (w - 1, h - 1), color, 6)
     cv2.putText(img, f"{state}  {label or '-'}", (12, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
-    if fired:
-        cv2.putText(img, f"fired {fired}", (12, h - 16), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
+    if fired:  # big, right under the state line, so one-frame events like swipes are visible
+        cv2.putText(img, f"fired: {fired}", (12, 75), cv2.FONT_HERSHEY_SIMPLEX, 1.3, color, 3)
     return img

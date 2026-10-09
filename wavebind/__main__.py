@@ -104,7 +104,8 @@ def run(args):
     path, cfg = load_config()
     try:
         act = actions(cfg)
-        eng = engine.Engine(cfg["bindings"], **cfg.get("engine", {}))
+        repeat = {g: b["repeat"] for g, b in cfg["bindings"].items() if "repeat" in b}
+        eng = engine.Engine(cfg["bindings"], repeat, **cfg.get("engine", {}))
         swipe = engine.Swipe(**cfg.get("swipe", {}))
     except (TypeError, ValueError) as e:
         sys.exit(f"bad config {path}: {e}")
@@ -112,7 +113,8 @@ def run(args):
     fired, fired_at, was_armed, window_open = None, 0, False, False
     try:
         for now, label, x, frame, hand in vision.stream(MODEL, args.camera, cfg.get("fps", 15), cfg.get("idle_fps", 5)):
-            gesture = eng.update(swipe.update(x if eng.armed else None, now) or label, now)
+            tracking = eng.armed and not eng.cooling(now)  # no swipes during cooldown: the hand is moving back
+            gesture = eng.update(swipe.update(x if tracking else None, now) or label, now)
             if eng.armed and not was_armed:
                 print("armed")
             was_armed = eng.armed

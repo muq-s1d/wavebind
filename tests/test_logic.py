@@ -26,9 +26,11 @@ class Bindings(unittest.TestCase):
         cfg = tomllib.loads(Path(inject.__file__).with_name("default.toml").read_text())
         inject.validate(cfg["bindings"])
         self.assertFalse(cfg["remember_key_permission"])
+        self.assertEqual(cfg["bindings"]["swipe_left"]["keys"], "super+Page_Down")  # phone-style: left -> next
 
     def test_invalid(self):
-        for bad in ({}, {"cmd": "x", "keys": "a"}, {"run": "x"}, {"keys": "NotAKey"}, {"media": "Louder"}):
+        for bad in ({}, {"cmd": "x", "keys": "a"}, {"run": "x"}, {"keys": "NotAKey"}, {"media": "Louder"},
+                    {"repeat": 0.3}, {"cmd": "x", "repeat": 0}, {"cmd": "x", "repeat": "fast"}):
             with self.assertRaises(ValueError, msg=bad):
                 inject.validate({"g": bad})
 
@@ -95,41 +97,86 @@ def feed(eng, frames, t=0.0, dt=0.1):
 
 
 class EngineTest(unittest.TestCase):
-    def make(self):
-        return engine.Engine({"Closed_Fist", "swipe_left"})  # defaults: hold 0.5 s, armed 2 s, cooldown 1 s, 3 frames
+    # defaults: hold 0.5 s, armed 3 s, cooldown 0.5 s, swipe_cooldown 1 s, 3 stable frames; frames every 0.1 s
+    def armed(self):
+        eng = engine.Engine({"Closed_Fist", "Thumb_Up", "Thumb_Down", "swipe_left", "swipe_right"})
+        _, t = feed(eng, ["Open_Palm"] * 6)  # t=0.0..0.5 -> armed at 0.5
+        self.assertTrue(eng.armed)
+        return eng, t
 
     def test_nothing_fires_unarmed(self):
-        fired, _ = feed(self.make(), ["Closed_Fist"] * 20)
+        eng = engine.Engine({"Closed_Fist"})
+        fired, _ = feed(eng, ["Closed_Fist"] * 20)
         self.assertEqual(fired, [])
 
-    def test_arm_then_fire_once(self):
-        eng = self.make()
-        fired, t = feed(eng, ["Open_Palm"] * 6)  # t=0.0..0.5 -> armed at 0.5
-        self.assertTrue(eng.armed)
-        fired, t = feed(eng, ["Closed_Fist"] * 2, t)
-        self.assertEqual(fired, [])  # 2 frames < stable_frames
-        fired, t = feed(eng, ["Closed_Fist"] * 10, t)
-        self.assertEqual(fired, ["Closed_Fist"])  # once, not 10 times
-        self.assertEqual(eng.state(t), "idle")  # cooldown over after 1 s of frames
-
     def test_short_palm_does_not_arm(self):
-        eng = self.make()
+        eng = engine.Engine({"Closed_Fist"})
         feed(eng, ["Open_Palm"] * 5 + [None] + ["Open_Palm"] * 5)  # 0.4 s, gap, 0.4 s
         self.assertFalse(eng.armed)
 
-    def test_unbound_and_expiry(self):
-        eng = self.make()
-        _, t = feed(eng, ["Open_Palm"] * 6)
-        fired, t = feed(eng, ["Victory"] * 5, t)  # not bound
+    def test_needs_stable_frames(self):
+        eng, t = self.armed()
+        fired, t = feed(eng, ["Closed_Fist"] * 2 + [None], t)
         self.assertEqual(fired, [])
-        fired, t = feed(eng, [None] * 20, t)  # 2 s passes, arming expires
+
+    def test_holding_fires_once(self):
+        eng, t = self.armed()
+        fired, t = feed(eng, ["Closed_Fist"] * 30, t)  # 3 s held
+        self.assertEqual(fired, ["Closed_Fist"])
+
+    def test_chain_without_rearming(self):
+        eng, t = self.armed()
+        fired, t = feed(eng, ["Thumb_Up"] * 8 + ["Thumb_Down"] * 8 + ["Closed_Fist"] * 8, t)
+        self.assertEqual(fired, ["Thumb_Up", "Thumb_Down", "Closed_Fist"])
+
+    def test_same_gesture_again_after_release(self):
+        eng, t = self.armed()
+        fired, t = feed(eng, ["Thumb_Up"] * 6 + [None] * 4 + ["Thumb_Up"] * 6, t)
+        self.assertEqual(fired, ["Thumb_Up", "Thumb_Up"])
+
+    def test_one_frame_flicker_is_not_a_release(self):
+        eng, t = self.armed()
+        fired, t = feed(eng, ["Thumb_Up"] * 6 + [None] + ["Thumb_Up"] * 10, t)
+        self.assertEqual(fired, ["Thumb_Up"])
+
+    def test_disarms_after_idle(self):
+        eng, t = self.armed()
+        fired, t = feed(eng, ["Thumb_Up"] * 4, t)
+        fired, t = feed(eng, [None] * 32, t)  # 3.2 s with no gesture
+        self.assertFalse(eng.armed)
         fired, t = feed(eng, ["Closed_Fist"] * 5, t)
         self.assertEqual(fired, [])
 
-    def test_swipe_fires_immediately(self):
-        eng = self.make()
+    def test_hold_repeats(self):
+        eng = engine.Engine({"Thumb_Up", "Closed_Fist"}, {"Thumb_Up": 0.3})
         _, t = feed(eng, ["Open_Palm"] * 6)
+        start = t
+        times = []
+        for i in range(21):  # thumb held 2 s, frames every 0.1 s
+            if eng.update("Thumb_Up", t):
+                times.append(round(t - start, 1))
+            t += 0.1
+        # first fire on frame 3, first repeat after 0.5 s (cooldown), then every 0.3 s
+        self.assertEqual(times, [0.2, 0.7, 1.0, 1.3, 1.6, 1.9])
+        self.assertTrue(eng.armed)  # repeats keep it armed
+
+    def test_repeat_does_not_affect_others(self):
+        eng = engine.Engine({"Thumb_Up", "Closed_Fist"}, {"Thumb_Up": 0.3})
+        _, t = feed(eng, ["Open_Palm"] * 6)
+        fired, t = feed(eng, ["Closed_Fist"] * 20, t)
+        self.assertEqual(fired, ["Closed_Fist"])
+
+    def test_unbound_ignored(self):
+        eng, t = self.armed()
+        fired, t = feed(eng, ["Victory"] * 5, t)
+        self.assertEqual(fired, [])
+
+    def test_swipe_then_no_swipe_during_cooldown(self):
+        eng, t = self.armed()
         self.assertEqual(eng.update("swipe_left", t), "swipe_left")
+        self.assertTrue(eng.cooling(t + 0.9))  # run() stops feeding the swipe tracker while cooling
+        self.assertIsNone(eng.update("swipe_right", t + 0.5))
+        self.assertEqual(eng.update("swipe_right", t + 1.1), "swipe_right")
 
 
 class SwipeTest(unittest.TestCase):
