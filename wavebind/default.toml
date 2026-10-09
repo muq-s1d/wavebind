@@ -1,4 +1,5 @@
-# wavebind config. Copy to ~/.config/wavebind/config.toml to customize.
+# wavebind defaults. Put changes in ~/.config/wavebind/config.toml: it is merged on top of this
+# file, so it only needs the settings you change. `Victory = false` in [bindings] unbinds a default.
 #
 # Each binding is exactly one of:
 #   cmd   = "a command"      run directly, no shell
@@ -42,7 +43,8 @@ settle = 0.3
 
 # Pinch to drag a window: arm, pinch thumb + index, move your hand, open to drop. Holds `modifier` +
 # left mouse button, which on GNOME drags the window under the mouse pointer.
-# Needs mouse-pointer permission (asked once). Delete this section to disable it and stay keyboard-only.
+# Needs mouse-pointer permission (asked once). `pinch = false` at the top of your config turns it off
+# and keeps permission keyboard-only.
 [pinch]
 modifier = "super"
 on = 0.25      # pinch closes below this thumb-to-index distance (fraction of palm size)

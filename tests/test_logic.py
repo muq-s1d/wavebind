@@ -3,7 +3,7 @@ import tomllib
 import unittest
 from pathlib import Path
 
-from wavebind import engine, inject
+from wavebind import __main__ as cli, engine, inject
 
 
 class Keys(unittest.TestCase):
@@ -294,6 +294,37 @@ class DragTest(unittest.TestCase):
         d.start((0.5, 0.5))
         total = sum(d.update((0.4, 0.5))[0] for _ in range(30))
         self.assertAlmostEqual(total, 100, places=3)  # same total travel, just spread out
+
+
+class ConfigMerge(unittest.TestCase):
+    def load(self, text):
+        with tempfile.TemporaryDirectory() as d:
+            old, cli.CONFIG = cli.CONFIG, Path(d) / "config.toml"
+            try:
+                cli.CONFIG.write_text(text)
+                return cli.load_config()
+            finally:
+                cli.CONFIG = old
+
+    def test_user_file_only_needs_changes(self):
+        path, cfg = self.load('pinch = false\n[engine]\narm_hold = 0.8\n[bindings]\nVictory = false\nThumb_Up = { media = "Next" }\n')
+        self.assertEqual(path.name, "config.toml")
+        self.assertEqual(cfg["engine"]["arm_hold"], 0.8)
+        self.assertEqual(cfg["engine"]["armed_for"], 3.0)  # other defaults in the table kept
+        self.assertEqual(cfg["bindings"]["Thumb_Up"], {"media": "Next"})  # overridden
+        self.assertIn("swipe_left", cfg["bindings"])  # untouched defaults kept
+        self.assertNotIn("Victory", cfg["bindings"])  # unbound
+        self.assertFalse(cfg["pinch"])
+        inject.validate(cfg["bindings"])
+
+    def test_no_user_file_means_defaults(self):
+        old, cli.CONFIG = cli.CONFIG, Path("/nonexistent/wavebind/config.toml")
+        try:
+            path, cfg = cli.load_config()
+        finally:
+            cli.CONFIG = old
+        self.assertEqual(path, cli.DEFAULT_CONFIG)
+        self.assertIn("pinch", cfg)
 
 
 if __name__ == "__main__":
