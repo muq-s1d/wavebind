@@ -61,6 +61,8 @@ class Portal:
 
     remember=False: GNOME/KDE asks every launch, nothing is stored.
     remember=True: the grant is saved as a restore token (mode 0600) and reused until revoked.
+    The token file records which devices it covers ("<types> <token>"), because restoring a
+    keyboard-only grant while asking for the pointer silently restores keyboard only.
     """
 
     name = "xdg-desktop-portal RemoteDesktop"
@@ -112,14 +114,21 @@ class Portal:
         if not self.remember:
             self.token_file.unlink(missing_ok=True)
         elif self.token_file.exists():
-            opts["restore_token"] = ("s", self.token_file.read_text().strip())
+            saved = self.token_file.read_text().split()
+            if len(saved) == 2 and saved[0] == str(types):  # only reuse a grant for the same devices
+                opts["restore_token"] = ("s", saved[1])
         self._request("SelectDevices", "oa{sv}", self.session, **opts)
         res = self._request("Start", "osa{sv}", self.session, "")
+        granted = res.get("devices", types)
+        if granted & types != types:
+            self.token_file.unlink(missing_ok=True)
+            names = " and ".join(n for bit, n in ((1, "keyboard"), (2, "mouse pointer")) if types & bit and not granted & bit)
+            raise PermissionError(f"the desktop did not grant the {names}; restart wavebind to be asked again")
         if self.remember and "restore_token" in res:  # tokens are single-use, save the fresh one every time
             self.token_file.parent.mkdir(parents=True, exist_ok=True)
             self.token_file.touch(mode=0o600)
             self.token_file.chmod(0o600)  # touch() leaves an existing file's mode alone
-            self.token_file.write_text(res["restore_token"])
+            self.token_file.write_text(f"{types} {res['restore_token']}")
 
     def _notify(self, method, sig, *args):
         from jeepney import new_method_call

@@ -112,7 +112,7 @@ def run(args):
         if "pinch" in cfg:
             p = dict(cfg["pinch"])
             drag_keys = inject.parse_keys(p.pop("modifier", "super"))
-            pinch = engine.Pinch(p.pop("on", 0.3), p.pop("off", 0.45))
+            pinch = engine.Pinch(p.pop("on", 0.25), p.pop("off", 0.45), p.pop("frames", 3))
             drag = engine.Drag(**p)  # leftover (misspelled) keys raise TypeError
     except (TypeError, ValueError) as e:
         sys.exit(f"bad config {path}: {e}")
@@ -123,14 +123,16 @@ def run(args):
         for now, label, wrist, frame, hand in vision.stream(MODEL, args.camera, cfg.get("fps", 15), cfg.get("idle_fps", 5)):
             gesture = None
             closed = pinch.update(hand) if pinch else False
+            pinching = closed and (dragging or label != "Closed_Fist")  # a fist's thumb rests near the index tip
             try:
                 if dragging and not closed:
                     dragging = False
                     act.input().drag(drag_keys, False)
+                    eng.pause(now, eng.swipe_cooldown)  # lowering the hand after a drop is not a swipe
                     print("dropped")
                 elif dragging:
                     act.input().move(*drag.update(tips(hand)))
-                elif closed and eng.armed and not eng.cooling(now):
+                elif pinching and eng.armed and not eng.cooling(now):
                     act.input().drag(drag_keys, True)
                     dragging = True
                     drag.start(tips(hand))
@@ -138,13 +140,13 @@ def run(args):
             except Exception as e:
                 print(f"pinch-drag failed: {e}", file=sys.stderr)
                 pinch = None  # stop trying; the finally below releases anything still held
-            if dragging or closed:  # a pinch is never a gesture or a swipe
+            if dragging or pinching:  # a pinch is never a gesture or a swipe
                 if eng.armed:
                     eng.keep_armed(now)
-                swipe.update(None, now)
+                swipe.update(wrist, now, active=False)
             else:
                 tracking = eng.armed and not eng.cooling(now)  # no swipes during cooldown: the hand is moving back
-                gesture = eng.update(swipe.update(wrist if tracking else None, now) or label, now)
+                gesture = eng.update(swipe.update(wrist, now, tracking) or label, now)
             if eng.armed and not was_armed:
                 print("armed")
             was_armed = eng.armed
@@ -157,7 +159,7 @@ def run(args):
                     print(f"{gesture} failed: {e}", file=sys.stderr)
             if args.preview:
                 shown = fired if now - fired_at < 1.5 else None
-                image = vision.draw(frame, hand, "pinch" if closed else label, "dragging" if dragging else eng.state(now), shown)
+                image = vision.draw(frame, hand, "pinch" if pinching else label, "dragging" if dragging else eng.state(now), shown)
                 if window_open:
                     cv2.imshow("wavebind", image)
                 else:

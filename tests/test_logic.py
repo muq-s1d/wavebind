@@ -51,13 +51,14 @@ class Bindings(unittest.TestCase):
 
 
 class PortalToken(unittest.TestCase):
-    def start(self, token, remember, pointer=False):
+    def start(self, token, remember, pointer=False, granted=None):
         p = inject.Portal.__new__(inject.Portal)  # skip __init__, no DBus
         p.token_file, p.remember, p.pointer, sent = token, remember, pointer, {}
 
         def request(method, sig, *args, **opts):
             sent[method] = opts
-            return {"session_handle": "/s", "restore_token": "NEW"}
+            types = opts.get("types", sent.get("SelectDevices", {}).get("types", ("u", 1)))[1]
+            return {"session_handle": "/s", "restore_token": "NEW", "devices": types if granted is None else granted}
 
         p._request = request
         p.start()
@@ -66,7 +67,7 @@ class PortalToken(unittest.TestCase):
     def test_forget(self):
         with tempfile.TemporaryDirectory() as d:
             token = Path(d) / "t"
-            token.write_text("OLD")
+            token.write_text("1 OLD")
             opts = self.start(token, remember=False)
             self.assertEqual(opts["persist_mode"], ("u", 0))
             self.assertNotIn("restore_token", opts)
@@ -80,14 +81,34 @@ class PortalToken(unittest.TestCase):
     def test_remember(self):
         with tempfile.TemporaryDirectory() as d:
             token = Path(d) / "t"
-            token.write_text("OLD")
+            token.write_text("1 OLD")
             token.chmod(0o644)
             opts = self.start(token, remember=True)
             self.assertEqual(opts["persist_mode"], ("u", 2))
             self.assertEqual(opts["restore_token"], ("s", "OLD"))
-            self.assertEqual(token.read_text(), "NEW")
+            self.assertEqual(token.read_text(), "1 NEW")
             self.assertEqual(token.stat().st_mode & 0o777, 0o600)
 
+    def test_keyboard_grant_not_reused_for_pointer(self):
+        with tempfile.TemporaryDirectory() as d:
+            token = Path(d) / "t"
+            token.write_text("1 OLD")  # saved when only the keyboard was asked for
+            opts = self.start(token, remember=True, pointer=True)
+            self.assertNotIn("restore_token", opts)  # so the desktop asks again
+            self.assertEqual(token.read_text(), "3 NEW")
+
+    def test_old_format_token_not_reused(self):
+        with tempfile.TemporaryDirectory() as d:
+            token = Path(d) / "t"
+            token.write_text("OLD")
+            self.assertNotIn("restore_token", self.start(token, remember=True))
+
+    def test_missing_device_is_an_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            token = Path(d) / "t"
+            with self.assertRaisesRegex(PermissionError, "mouse pointer"):
+                self.start(token, remember=True, pointer=True, granted=1)
+            self.assertFalse(token.exists())
 
 
 def feed(eng, frames, t=0.0, dt=0.1):
@@ -186,9 +207,9 @@ class EngineTest(unittest.TestCase):
 
 class SwipeTest(unittest.TestCase):
     def run_track(self, points, extra=2):
-        """Feed wrist points 0.1 s apart, then hold the last point `extra` more frames."""
+        """Hand already settled in view, then wrist points 0.1 s apart, then the last point held `extra` frames."""
         sw, got = engine.Swipe(), []
-        for i, pt in enumerate(points + [points[-1]] * extra):
+        for i, pt in enumerate([points[0]] * 4 + points + [points[-1]] * extra):
             got.append(sw.update(pt, i * 0.1))
         return [g for g in got if g]
 
@@ -205,9 +226,22 @@ class SwipeTest(unittest.TestCase):
     def test_waits_for_confirmation(self):
         self.assertEqual(self.run_track([(0.3, 0.5), (0.45, 0.5), (0.6, 0.5)], extra=1), [])
 
+    def test_raising_hand_into_frame_is_not_a_swipe(self):
+        sw = engine.Swipe()
+        got = [sw.update(pt, i * 0.1) for i, pt in enumerate([None, (0.5, 0.9), (0.5, 0.7), (0.5, 0.5), (0.5, 0.5), (0.5, 0.5)])]
+        self.assertEqual([g for g in got if g], [])
+
+    def test_inactive_tracks_presence_only(self):
+        sw = engine.Swipe()
+        for i in range(4):
+            sw.update((0.3, 0.5), i * 0.1, active=False)  # hand settled while e.g. arming
+        got = [sw.update(pt, 0.4 + i * 0.1) for i, pt in enumerate([(0.3, 0.5), (0.45, 0.5), (0.6, 0.5), (0.6, 0.5), (0.6, 0.5)])]
+        self.assertEqual([g for g in got if g], ["swipe_left"])  # no extra settle delay once active
+
     def test_hand_leaving_frame_is_not_a_swipe(self):
         sw = engine.Swipe()
-        got = [sw.update(pt, i * 0.1) for i, pt in enumerate([(0.5, 0.5), (0.5, 0.65), (0.5, 0.8), None, None])]
+        pts = [(0.5, 0.5)] * 4 + [(0.5, 0.65), (0.5, 0.8), None, None]
+        got = [sw.update(pt, i * 0.1) for i, pt in enumerate(pts)]
         self.assertEqual([g for g in got if g], [])  # dropped hand: crossed the threshold, then vanished
 
     def test_slow_drift_is_not_a_swipe(self):
@@ -232,9 +266,14 @@ def hand(thumb_index):
 
 class PinchTest(unittest.TestCase):
     def test_hysteresis(self):
-        p = engine.Pinch()  # closes below 0.3 * palm (0.06), opens above 0.45 * palm (0.09)
-        self.assertEqual([p.update(hand(d)) for d in (0.15, 0.05, 0.08, 0.08, 0.1, 0.07)],
+        p = engine.Pinch(frames=1)  # closes below 0.25 * palm (0.05), opens above 0.45 * palm (0.09)
+        self.assertEqual([p.update(hand(d)) for d in (0.15, 0.04, 0.08, 0.08, 0.1, 0.06)],
                          [False, True, True, True, False, False])
+
+    def test_needs_frames_in_a_row(self):
+        p = engine.Pinch()  # frames=3
+        self.assertEqual([p.update(hand(d)) for d in (0.04, 0.04, 0.15, 0.04, 0.04, 0.04)],
+                         [False, False, False, False, False, True])
 
     def test_no_hand_opens(self):
         p = engine.Pinch()

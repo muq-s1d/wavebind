@@ -31,6 +31,9 @@ class Engine:
     def keep_armed(self, now):
         self.armed_until = now + self.armed_for
 
+    def pause(self, now, seconds):
+        self.cooldown_until = now + seconds
+
     def cooling(self, now):
         return self.cooldown_until is not None and now < self.cooldown_until
 
@@ -79,17 +82,22 @@ class Engine:
 class Swipe:
     """Wrist moving `distance` (fraction of frame width or height) within `window` s ->
     swipe_left / swipe_right / swipe_up / swipe_down, from the user's point of view (the raw camera
-    image is not mirrored). The hand must still be in view `confirm_frames` frames later, so dropping
-    your hand out of frame is not a swipe down."""
+    image is not mirrored). The hand must be in view `settle` s before its motion counts (raising
+    your hand into frame is not a swipe up) and still in view `confirm_frames` frames later
+    (dropping it out of frame is not a swipe down)."""
 
-    def __init__(self, distance=0.25, window=0.4, confirm_frames=2):
-        self.distance, self.window, self.confirm_frames = distance, window, confirm_frames
+    def __init__(self, distance=0.25, window=0.4, confirm_frames=2, settle=0.3):
+        self.distance, self.window, self.confirm_frames, self.settle = distance, window, confirm_frames, settle
         self.track = deque()
-        self.pending, self.seen = None, 0
+        self.pending, self.seen, self.visible_since = None, 0, None
 
-    def update(self, pos, now):
-        """pos = (x, y) of the wrist, or None with no hand (or when swipes shouldn't count)."""
+    def update(self, pos, now, active=True):
+        """pos = (x, y) of the wrist, or None with no hand. active=False: note the hand, don't track it."""
         if pos is None:
+            self.visible_since = None
+        elif self.visible_since is None:
+            self.visible_since = now
+        if pos is None or not active or now - self.visible_since < self.settle:
             self.track.clear()
             self.pending = None
             return None
@@ -117,18 +125,26 @@ class Swipe:
 
 class Pinch:
     """Thumb tip touching index tip, relative to palm size (wrist to middle knuckle) so it works at
-    any distance from the camera. Closes below `on`, opens above `off`, so it doesn't flicker."""
+    any distance from the camera. Closes after `frames` frames in a row below `on`, opens as soon as
+    it is above `off`, so it neither triggers on a passing touch nor flickers."""
 
-    def __init__(self, on=0.3, off=0.45):
-        self.on, self.off, self.closed = on, off, False
+    def __init__(self, on=0.25, off=0.45, frames=3):
+        self.on, self.off, self.frames = on, off, frames
+        self.closed, self.count = False, 0
 
     def update(self, hand):
         if hand is None:
-            self.closed = False
+            self.closed, self.count = False, 0
             return False
         xy = lambda p: (p.x, p.y)
         ratio = math.dist(xy(hand[4]), xy(hand[8])) / max(math.dist(xy(hand[0]), xy(hand[9])), 1e-6)
-        self.closed = ratio < (self.off if self.closed else self.on)
+        if self.closed:
+            self.closed = ratio < self.off
+        else:
+            self.count = self.count + 1 if ratio < self.on else 0
+            self.closed = self.count >= self.frames
+        if self.closed:
+            self.count = 0
         return self.closed
 
 
