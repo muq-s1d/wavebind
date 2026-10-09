@@ -20,6 +20,10 @@ def sha256(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def model_ok():
+    return MODEL.exists() and sha256(MODEL) == MODEL_SHA256
+
+
 def load_config():
     path = CONFIG if CONFIG.exists() else DEFAULT_CONFIG
     return path, tomllib.loads(path.read_text())
@@ -28,12 +32,12 @@ def load_config():
 def actions(cfg):
     from . import inject
 
-    return inject.Actions(cfg["bindings"], PORTAL_TOKEN, cfg.get("remember_key_permission", False))
+    return inject.Actions(cfg["bindings"], PORTAL_TOKEN, cfg.get("remember_key_permission", True))
 
 
 def setup(args):
     """The only network access wavebind ever does: fetch the model once."""
-    if MODEL.exists() and sha256(MODEL) == MODEL_SHA256:
+    if model_ok():
         print(f"model already installed: {MODEL}")
         return
     DATA.mkdir(parents=True, exist_ok=True)
@@ -59,13 +63,13 @@ def check(args):
     print(f"session     {os.environ.get('XDG_SESSION_TYPE', '?')} / {os.environ.get('XDG_CURRENT_DESKTOP', '?')}")
     path, cfg = load_config()
     print(f"config      {path}   bindings: {', '.join(cfg['bindings'])}")
-    model_ok = MODEL.exists() and sha256(MODEL) == MODEL_SHA256
-    print(f"model       {MODEL} {'ok' if model_ok else 'MISSING, run: wavebind setup'}")
+    ok_model = model_ok()
+    print(f"model       {MODEL} {'ok' if ok_model else 'MISSING or corrupt, run: wavebind setup'}")
     cap = cv2.VideoCapture(args.camera)
     ok, frame = cap.read()
     cap.release()
     print(f"camera {args.camera}    {'%dx%d' % (frame.shape[1], frame.shape[0]) if ok else 'FAILED to read a frame'}")
-    backend = inject.detect(PORTAL_TOKEN, cfg.get("remember_key_permission", False))
+    backend = inject.detect(PORTAL_TOKEN, cfg.get("remember_key_permission", True))
     print(f"keys        {backend.name if backend else 'NONE: install xdotool (X11) or wtype (wlroots)'}")
     if args.type and backend:
         print("pressing Shift once (GNOME/KDE may ask for permission the first time)...")
@@ -74,7 +78,7 @@ def check(args):
         except (TimeoutError, PermissionError) as e:
             sys.exit(f"key press failed: {e}")
         print("key sent")
-    if not (model_ok and ok and backend):
+    if not (ok_model and ok and backend):
         sys.exit(1)
 
 
@@ -95,12 +99,13 @@ def run(args):
 
     from . import engine, vision
 
-    if not MODEL.exists():
-        sys.exit("model missing, run: wavebind setup")
+    if not model_ok():
+        sys.exit("model missing or corrupt, run: wavebind setup")
     path, cfg = load_config()
     try:
         act = actions(cfg)
-        eng = engine.Engine(cfg["bindings"], **cfg.get("engine", {}))
+        repeat = {g: b["repeat"] for g, b in cfg["bindings"].items() if "repeat" in b}
+        eng = engine.Engine(cfg["bindings"], repeat, **cfg.get("engine", {}))
         swipe = engine.Swipe(**cfg.get("swipe", {}))
     except (TypeError, ValueError) as e:
         sys.exit(f"bad config {path}: {e}")
@@ -108,7 +113,8 @@ def run(args):
     fired, fired_at, was_armed, window_open = None, 0, False, False
     try:
         for now, label, x, frame, hand in vision.stream(MODEL, args.camera, cfg.get("fps", 15), cfg.get("idle_fps", 5)):
-            gesture = eng.update(swipe.update(x if eng.armed else None, now) or label, now)
+            tracking = eng.armed and not eng.cooling(now)  # no swipes during cooldown: the hand is moving back
+            gesture = eng.update(swipe.update(x if tracking else None, now) or label, now)
             if eng.armed and not was_armed:
                 print("armed")
             was_armed = eng.armed

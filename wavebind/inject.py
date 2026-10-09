@@ -145,8 +145,10 @@ def media(method):
 
 def validate(bindings):
     for gesture, b in bindings.items():
-        if len(b) != 1 or not set(b) <= {"cmd", "media", "keys"}:
-            raise ValueError(f"binding {gesture}: needs exactly one of cmd, media, keys")
+        if len(set(b) & {"cmd", "media", "keys"}) != 1 or not set(b) <= {"cmd", "media", "keys", "repeat"}:
+            raise ValueError(f"binding {gesture}: needs exactly one of cmd, media, keys (plus optional repeat)")
+        if "repeat" in b and not (isinstance(b["repeat"], (int, float)) and b["repeat"] > 0):
+            raise ValueError(f"binding {gesture}: repeat must be a number of seconds > 0")
         if "keys" in b:
             for k in parse_keys(b["keys"]):
                 keysym(k)

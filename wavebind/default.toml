@@ -4,26 +4,31 @@
 #   cmd   = "a command"      run directly, no shell
 #   media = "PlayPause"      PlayPause, Next, Previous or Stop on the active media player
 #   keys  = "super+Page_Down" press a key combo (X keysym names; super/ctrl/alt/shift aliases)
+# plus optionally:
+#   repeat = 0.3             keep firing every 0.3 s while the gesture is held
 #
 # Only `keys` bindings need key-press permission. On GNOME/KDE that is the
 # xdg-desktop-portal RemoteDesktop dialog, asked the first time a `keys` binding fires.
 
+# true:  allow once, remembered (token saved to ~/.local/share/wavebind/portal_token, mode 0600).
+#        Delete that file to be asked again.
 # false: ask for key-press permission every launch, store nothing.
-# true:  remember the grant (token saved with mode 0600) until revoked in Settings.
-remember_key_permission = false
+remember_key_permission = true
 
 # Frames analyzed per second with a hand in view, and with none (idle).
 # Lower = less CPU, slower reactions.
 fps = 15
 idle_fps = 5
 
-# Arming: hold arm_gesture for arm_hold s, then you have armed_for s to make one gesture.
-# A gesture must be seen stable_frames frames in a row; after firing, cooldown s of nothing.
+# Arming: hold arm_gesture for arm_hold s. While armed you can chain gestures; it disarms after
+# armed_for s without one. A gesture must be seen stable_frames frames in a row. After a gesture,
+# cooldown s of nothing (swipe_cooldown after a swipe). Holding a gesture fires it only once.
 [engine]
 arm_gesture = "Open_Palm"
 arm_hold = 0.5
-armed_for = 2.0
-cooldown = 1.0
+armed_for = 3.0
+cooldown = 0.5
+swipe_cooldown = 1.0
 stable_frames = 3
 
 # Swipe while armed: wrist moves `distance` (fraction of frame width) within `window` s.
@@ -32,8 +37,11 @@ distance = 0.25
 window = 0.4
 
 [bindings]
-swipe_left = { keys = "super+Page_Up" }      # GNOME: previous workspace
-swipe_right = { keys = "super+Page_Down" }   # GNOME: next workspace
+# Like a phone: swipe left to go to the workspace on the right.
+swipe_left = { keys = "super+Page_Down" }    # GNOME: next workspace
+swipe_right = { keys = "super+Page_Up" }     # GNOME: previous workspace
 Closed_Fist = { media = "PlayPause" }
-Thumb_Up = { cmd = "wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 5%+" }
-Thumb_Down = { cmd = "wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-" }
+# Volume keys, so the desktop shows its volume popup and handles mute. Hold to keep going.
+# Without key permission instead: { cmd = "wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 5%+", repeat = 0.3 }
+Thumb_Up = { keys = "XF86AudioRaiseVolume", repeat = 0.3 }
+Thumb_Down = { keys = "XF86AudioLowerVolume", repeat = 0.3 }

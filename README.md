@@ -24,8 +24,10 @@ wavebind run             # headless; Ctrl+C quits
 ```
 
 1. **Arm:** hold an open palm for 0.5 s (preview border turns green).
-2. **Act:** within 2 s, make a gesture (held for 3 frames) or swipe your open palm left/right.
-3. It fires once, then ignores everything for 1 s. Nothing fires unless armed.
+2. **Act:** make a gesture (held for 3 frames) or swipe your open palm left/right. Chain as many as
+   you like; it disarms after 3 s without one. Nothing fires unless armed.
+3. Holding a gesture fires it once; change hand shape to fire it again. After a swipe, swipes pause
+   for 1 s so moving your hand back doesn't count as the opposite swipe.
 
 Built-in gestures: `Closed_Fist`, `Open_Palm` (the arm gesture), `Pointing_Up`, `Thumb_Up`,
 `Thumb_Down`, `Victory`, `ILoveYou`, plus `swipe_left` / `swipe_right` (from your point of view).
@@ -39,7 +41,7 @@ Defaults live in [`wavebind/default.toml`](wavebind/default.toml). To customize,
 
 ```toml
 [bindings]
-Thumb_Up = { cmd = "wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 5%+" }  # run a command (no shell)
+Thumb_Up = { cmd = "wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 5%+", repeat = 0.3 }  # command, no shell; repeats while held
 Closed_Fist = { media = "PlayPause" }   # PlayPause / Next / Previous / Stop via MPRIS
 swipe_right = { keys = "super+Page_Down" }  # press a key combo
 ```
@@ -48,14 +50,17 @@ Test a binding without the camera: `wavebind fire Thumb_Up`.
 
 ## Permissions
 `cmd` and `media` bindings need no special permission. Only `keys` bindings press keys, and wavebind
-asks for that the first time one fires, never earlier:
+asks for that the first time one fires, never earlier. The defaults use keys for swipes and for volume
+(so GNOME shows its volume popup); swap volume to the `wpctl` command above to avoid key permission
+for it.
 
 - **GNOME / KDE:** the desktop shows a "Remote Desktop" dialog. Despite the name, nothing goes over the
   network and nothing can see your screen: wavebind asks for the keyboard only, through the local
   xdg-desktop-portal. GNOME shows an indicator in the top bar while it is active.
-- `remember_key_permission = false` (default): you are asked every launch and nothing is stored.
-- `remember_key_permission = true`: the grant is saved to `~/.local/share/wavebind/portal_token`
-  (mode 0600) so later launches don't ask. Delete that file to make wavebind ask again.
+- `remember_key_permission = true` (default): allow once. The grant is saved to
+  `~/.local/share/wavebind/portal_token` (readable only by you) so later launches don't ask.
+  Delete that file to make wavebind ask again.
+- `remember_key_permission = false`: you are asked every launch and nothing is stored.
 
 `wavebind check --type` sends one Shift press to test this.
 
