@@ -169,3 +169,56 @@ class Drag:
         dx, dy = (self.pos[0] - x) * self.gain, (y - self.pos[1]) * self.gain / self.aspect
         self.pos = (x, y)
         return dx, dy
+
+
+class OneEuro:
+    """One Euro filter (Casiez et al., CHI 2012) for a point: heavy smoothing when moving slowly
+    (steady enough for small buttons), little when moving fast (no lag on big moves).
+    min_cutoff (Hz): lower = steadier at rest. beta: higher = less lag when moving fast."""
+
+    def __init__(self, min_cutoff=1.0, beta=0.007, d_cutoff=1.0):
+        self.min_cutoff, self.beta, self.d_cutoff = min_cutoff, beta, d_cutoff
+        self.prev = None
+
+    def __call__(self, x, now):
+        if self.prev is None:
+            self.prev, self.speed, self.t = x, (0.0,) * len(x), now
+            return x
+        dt = max(now - self.t, 1e-3)
+        self.t = now
+        alpha = lambda cutoff: 1 / (1 + 1 / (2 * math.pi * cutoff * dt))
+        a = alpha(self.d_cutoff)
+        self.speed = tuple(a * (xi - pi) / dt + (1 - a) * si for xi, pi, si in zip(x, self.prev, self.speed))
+        a = alpha(self.min_cutoff + self.beta * math.hypot(*self.speed))
+        self.prev = tuple(a * xi + (1 - a) * pi for xi, pi in zip(x, self.prev))
+        return self.prev
+
+
+class Pointer:
+    """Hand position inside a centred `box` (fraction of the camera frame) maps to the whole screen,
+    like a drawing tablet, so every corner is reachable. The portal only offers relative motion, so
+    start() first pushes the pointer far past the top-left corner (it stops at the edge) and the
+    position is tracked from there."""
+
+    def __init__(self, screen, box=0.6, min_cutoff=1.0, beta=0.007):
+        self.w, self.h = screen
+        self.box, self.min_cutoff, self.beta = box, min_cutoff, beta
+        self.pos = None
+
+    def target(self, hand):
+        clamp = lambda v: min(max(v, 0.0), 1.0)
+        u = clamp(((1 - hand[0]) - 0.5) / self.box + 0.5)  # mirrored: hand to your right = pointer right
+        v = clamp((hand[1] - 0.5) / self.box + 0.5)
+        return u * (self.w - 1), v * (self.h - 1)
+
+    def start(self, hand, now):
+        """Returns the relative moves to send: into the top-left corner, then to the hand's spot."""
+        self.filter = OneEuro(self.min_cutoff, self.beta)
+        self.pos = self.filter(self.target(hand), now)
+        return [(-4 * self.w, -4 * self.h), self.pos]
+
+    def update(self, hand, now):
+        x, y = self.filter(self.target(hand), now)
+        dx, dy = x - self.pos[0], y - self.pos[1]
+        self.pos = (x, y)
+        return dx, dy

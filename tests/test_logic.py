@@ -296,5 +296,50 @@ class DragTest(unittest.TestCase):
         self.assertAlmostEqual(total, 100, places=3)  # same total travel, just spread out
 
 
+class PointerTest(unittest.TestCase):
+    def test_filter_steady_when_jittering(self):
+        f = engine.OneEuro()
+        out = [f((500 + (3 if i % 2 else -3), 500), i / 30)[0] for i in range(60)]  # +-3 px jitter at 30 fps
+        self.assertLess(max(out[30:]) - min(out[30:]), 2)  # filtered spread under 2 px (raw: 6 px)
+
+    def test_filter_follows_fast_moves(self):
+        f = engine.OneEuro()
+        for i in range(30):
+            f((0.0, 0.0), i / 30)
+        for i in range(30, 45):  # jump 1000 px and hold for 0.5 s
+            x = f((1000.0, 0.0), i / 30)[0]
+        self.assertGreater(x, 950)
+
+    def test_box_maps_to_whole_screen(self):
+        ptr = engine.Pointer((1920, 1080), box=0.6)
+        self.assertEqual(ptr.target((0.5, 0.5)), (959.5, 539.5))  # centre -> centre
+        self.assertEqual(ptr.target((0.8, 0.2)), (0.0, 0.0))  # box edge, image right = your left -> top-left
+        self.assertEqual(ptr.target((0.0, 1.0)), (1919.0, 1079.0))  # beyond the box clamps to the corner
+
+    def test_start_homes_then_moves(self):
+        ptr = engine.Pointer((1920, 1080))
+        home, there = ptr.start((0.5, 0.5), 0.0)
+        self.assertLessEqual(home[0], -1920)
+        self.assertLessEqual(home[1], -1080)  # far enough past the corner to clamp there
+        self.assertEqual(there, (959.5, 539.5))
+        total = list(there)
+        for i in range(1, 60):  # hand moves to the box's top-left; deltas add up to the new spot
+            dx, dy = ptr.update((0.8, 0.2), i / 30)
+            total[0] += dx
+            total[1] += dy
+        self.assertAlmostEqual(total[0], ptr.pos[0])
+        self.assertLess(total[0], 5)
+        self.assertLess(total[1], 5)
+
+    def test_screen_size(self):
+        self.assertEqual(inject.screen_size("Screen 0: minimum 16 x 16, current 2560 x 1440, maximum 32767"), (2560, 1440))
+        with self.assertRaises(ValueError):
+            inject.screen_size("nothing useful")
+
+    def test_quick_click(self):
+        p = engine.Pinch(0.3, 0.45, frames=1)
+        self.assertEqual([p.update(hand(d)) for d in (0.15, 0.05, 0.15)], [False, True, False])  # one-frame pinch
+
+
 if __name__ == "__main__":
     unittest.main()

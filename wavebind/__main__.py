@@ -117,7 +117,10 @@ def run(args):
         if "pointer" in cfg:
             q = dict(cfg["pointer"])
             pointer_gesture, lost_after = q.pop("gesture", "Pointing_Up"), q.pop("lost_after", 0.5)
-            pointer, click = engine.Drag(**{"gain": 2500, "smooth": 0.4, **q}), engine.Pinch(**thresholds)
+            pointer_fps = q.pop("fps", 30)
+            click = engine.Pinch(q.pop("click_on", 0.3), q.pop("click_off", 0.45), frames=1)  # quick pinches count
+            screen = q.pop("screen", "auto")
+            pointer = engine.Pointer(inject.screen_size() if screen == "auto" else tuple(screen), **q)
         gestures = list(cfg["bindings"]) + ([pointer_gesture] if pointer else [])
         repeat = {g: b["repeat"] for g, b in cfg["bindings"].items() if "repeat" in b}
         eng = engine.Engine(gestures, repeat, **cfg.get("engine", {}))
@@ -128,6 +131,7 @@ def run(args):
     fired, fired_at, was_armed, window_open = None, 0, False, False
     dragging = pointing = pressed = False  # window drag / pointer mode / left button held in pointer mode
     seen_at = 0.0
+    rates = {"fps": cfg.get("fps", 15), "idle_fps": cfg.get("idle_fps", 5)}
     tips = lambda h: ((h[4].x + h[8].x) / 2, (h[4].y + h[8].y) / 2)  # between thumb and index tip
     knuckle = lambda h: (h[5].x, h[5].y)  # index knuckle: stays put when the fingertip pinches
 
@@ -137,11 +141,12 @@ def run(args):
             pressed = False
             act.input().drag([], False)
         pointing = False
+        rates["fps"] = cfg.get("fps", 15)
         eng.disarm()
         print(f"pointer off ({why})")
 
     try:
-        for now, label, wrist, frame, hand in vision.stream(MODEL, args.camera, cfg.get("fps", 15), cfg.get("idle_fps", 5)):
+        for now, label, wrist, frame, hand in vision.stream(MODEL, args.camera, rates):
             gesture, pinching = None, False
             if pointing:  # mouse follows the hand, pinch = left button; lower the hand to stop
                 try:
@@ -150,7 +155,7 @@ def run(args):
                             stop_pointing("hand out of view")
                     else:
                         seen_at = now
-                        act.input().move(*pointer.update(knuckle(hand)))
+                        act.input().move(*pointer.update(knuckle(hand), now))
                         down = click.update(hand)
                         if down != pressed:
                             act.input().drag([], down)
@@ -191,9 +196,15 @@ def run(args):
                 fired, fired_at = gesture, now
                 if pointer and gesture == pointer_gesture:
                     pointing, seen_at = True, now
-                    pointer.start(knuckle(hand))
+                    rates["fps"] = pointer_fps  # full speed while pointing: smoother, and quick pinches aren't missed
                     click.update(None)  # start with the button up
-                    print("pointer on")
+                    try:
+                        for dx, dy in pointer.start(knuckle(hand), now):
+                            act.input().move(dx, dy)
+                        print("pointer on")
+                    except Exception as e:
+                        print(f"pointer failed: {e}", file=sys.stderr)
+                        stop_pointing("error")
                 else:
                     try:
                         act.fire(gesture)

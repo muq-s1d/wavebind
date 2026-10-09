@@ -170,6 +170,21 @@ def detect(token_file, remember=False, pointer=False):
     return Wtype() if shutil.which("wtype") else None
 
 
+def screen_size(xrandr_output=None):
+    """Logical screen size in pixels, read from `xrandr --current` (works under XWayland too)."""
+    import re
+
+    if xrandr_output is None:
+        try:
+            xrandr_output = subprocess.run(["xrandr", "--current"], capture_output=True, text=True, timeout=5).stdout
+        except (OSError, subprocess.TimeoutExpired):
+            xrandr_output = ""
+    m = re.search(r"current (\d+) x (\d+)", xrandr_output)
+    if not m:
+        raise ValueError("can't detect the screen size; set screen = [width, height] in [pointer]")
+    return int(m[1]), int(m[2])
+
+
 MEDIA = {"PlayPause", "Next", "Previous", "Stop"}
 
 

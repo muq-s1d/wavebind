@@ -53,12 +53,16 @@ smooth = 0.5   # 0..1: lower = steadier but laggier
 
 # Pointer mode: arm, then point up. The mouse follows your hand without clicking; pinch thumb + index
 # to press the left button and open to release (a click, or hold to drag / select). Lower your hand
-# out of view to stop. Uses the [pinch] thresholds. Needs mouse-pointer permission (asked once).
-# Delete this section to disable it.
+# out of view to stop. Needs mouse-pointer permission (asked once). Delete this section to disable it.
 [pointer]
 gesture = "Pointing_Up"
-gain = 2500        # pointer pixels per full frame width of hand movement
-smooth = 0.4       # 0..1: lower = steadier but laggier
+screen = "auto"    # or [width, height] in pixels if auto-detection (xrandr) fails
+box = 0.6          # this centred fraction of the camera view maps to the whole screen; smaller = less hand travel
+min_cutoff = 1.0   # jitter filter, Hz: lower = steadier when still, but laggier
+beta = 0.007       # jitter filter: higher = less lag on fast moves
+click_on = 0.3     # pinch below this (fraction of palm size) presses the button, on the first frame
+click_off = 0.45   # and above this releases it
+fps = 30           # frames analysed per second while pointing
 lost_after = 0.5   # seconds without a hand before pointer mode ends
 
 [bindings]
