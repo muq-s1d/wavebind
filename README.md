@@ -57,9 +57,10 @@ for it.
 - **GNOME / KDE:** the desktop shows a "Remote Desktop" dialog. Despite the name, nothing goes over the
   network and nothing can see your screen: wavebind asks for the keyboard only, through the local
   xdg-desktop-portal. GNOME shows an indicator in the top bar while it is active.
-- `remember_key_permission = false` (default): you are asked every launch and nothing is stored.
-- `remember_key_permission = true`: the grant is saved to `~/.local/share/wavebind/portal_token`
-  (mode 0600) so later launches don't ask. Delete that file to make wavebind ask again.
+- `remember_key_permission = true` (default): allow once. The grant is saved to
+  `~/.local/share/wavebind/portal_token` (readable only by you) so later launches don't ask.
+  Delete that file to make wavebind ask again.
+- `remember_key_permission = false`: you are asked every launch and nothing is stored.
 
 `wavebind check --type` sends one Shift press to test this.
 

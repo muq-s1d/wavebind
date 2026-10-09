@@ -32,7 +32,7 @@ def load_config():
 def actions(cfg):
     from . import inject
 
-    return inject.Actions(cfg["bindings"], PORTAL_TOKEN, cfg.get("remember_key_permission", False))
+    return inject.Actions(cfg["bindings"], PORTAL_TOKEN, cfg.get("remember_key_permission", True))
 
 
 def setup(args):
@@ -69,7 +69,7 @@ def check(args):
     ok, frame = cap.read()
     cap.release()
     print(f"camera {args.camera}    {'%dx%d' % (frame.shape[1], frame.shape[0]) if ok else 'FAILED to read a frame'}")
-    backend = inject.detect(PORTAL_TOKEN, cfg.get("remember_key_permission", False))
+    backend = inject.detect(PORTAL_TOKEN, cfg.get("remember_key_permission", True))
     print(f"keys        {backend.name if backend else 'NONE: install xdotool (X11) or wtype (wlroots)'}")
     if args.type and backend:
         print("pressing Shift once (GNOME/KDE may ask for permission the first time)...")

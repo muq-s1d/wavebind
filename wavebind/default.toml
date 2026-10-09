@@ -10,9 +10,10 @@
 # Only `keys` bindings need key-press permission. On GNOME/KDE that is the
 # xdg-desktop-portal RemoteDesktop dialog, asked the first time a `keys` binding fires.
 
+# true:  allow once, remembered (token saved to ~/.local/share/wavebind/portal_token, mode 0600).
+#        Delete that file to be asked again.
 # false: ask for key-press permission every launch, store nothing.
-# true:  remember the grant (token saved with mode 0600) until revoked in Settings.
-remember_key_permission = false
+remember_key_permission = true
 
 # Frames analyzed per second with a hand in view, and with none (idle).
 # Lower = less CPU, slower reactions.

@@ -25,7 +25,7 @@ class Bindings(unittest.TestCase):
     def test_default_config_is_valid(self):
         cfg = tomllib.loads(Path(inject.__file__).with_name("default.toml").read_text())
         inject.validate(cfg["bindings"])
-        self.assertFalse(cfg["remember_key_permission"])
+        self.assertTrue(cfg["remember_key_permission"])
         self.assertEqual(cfg["bindings"]["swipe_left"]["keys"], "super+Page_Down")  # phone-style: left -> next
 
     def test_invalid(self):
