@@ -20,6 +20,10 @@ def sha256(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def model_ok():
+    return MODEL.exists() and sha256(MODEL) == MODEL_SHA256
+
+
 def load_config():
     path = CONFIG if CONFIG.exists() else DEFAULT_CONFIG
     return path, tomllib.loads(path.read_text())
@@ -33,7 +37,7 @@ def actions(cfg):
 
 def setup(args):
     """The only network access wavebind ever does: fetch the model once."""
-    if MODEL.exists() and sha256(MODEL) == MODEL_SHA256:
+    if model_ok():
         print(f"model already installed: {MODEL}")
         return
     DATA.mkdir(parents=True, exist_ok=True)
@@ -59,8 +63,8 @@ def check(args):
     print(f"session     {os.environ.get('XDG_SESSION_TYPE', '?')} / {os.environ.get('XDG_CURRENT_DESKTOP', '?')}")
     path, cfg = load_config()
     print(f"config      {path}   bindings: {', '.join(cfg['bindings'])}")
-    model_ok = MODEL.exists() and sha256(MODEL) == MODEL_SHA256
-    print(f"model       {MODEL} {'ok' if model_ok else 'MISSING, run: wavebind setup'}")
+    ok_model = model_ok()
+    print(f"model       {MODEL} {'ok' if ok_model else 'MISSING or corrupt, run: wavebind setup'}")
     cap = cv2.VideoCapture(args.camera)
     ok, frame = cap.read()
     cap.release()
@@ -74,7 +78,7 @@ def check(args):
         except (TimeoutError, PermissionError) as e:
             sys.exit(f"key press failed: {e}")
         print("key sent")
-    if not (model_ok and ok and backend):
+    if not (ok_model and ok and backend):
         sys.exit(1)
 
 
@@ -95,8 +99,8 @@ def run(args):
 
     from . import engine, vision
 
-    if not MODEL.exists():
-        sys.exit("model missing, run: wavebind setup")
+    if not model_ok():
+        sys.exit("model missing or corrupt, run: wavebind setup")
     path, cfg = load_config()
     try:
         act = actions(cfg)
