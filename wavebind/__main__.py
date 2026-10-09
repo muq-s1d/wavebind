@@ -32,7 +32,8 @@ def load_config():
 def actions(cfg):
     from . import inject
 
-    return inject.Actions(cfg["bindings"], PORTAL_TOKEN, cfg.get("remember_key_permission", True))
+    remember = cfg.get("remember_key_permission", True)
+    return inject.Actions(cfg["bindings"], PORTAL_TOKEN, remember, pointer="pinch" in cfg)
 
 
 def setup(args):
@@ -97,7 +98,7 @@ def run(args):
         os.environ.setdefault("QT_QPA_PLATFORM", "xcb")  # pip OpenCV's Qt only ships the X11 plugin (XWayland)
     import cv2
 
-    from . import engine, vision
+    from . import engine, inject, vision
 
     if not model_ok():
         sys.exit("model missing or corrupt, run: wavebind setup")
@@ -107,14 +108,43 @@ def run(args):
         repeat = {g: b["repeat"] for g, b in cfg["bindings"].items() if "repeat" in b}
         eng = engine.Engine(cfg["bindings"], repeat, **cfg.get("engine", {}))
         swipe = engine.Swipe(**cfg.get("swipe", {}))
+        pinch = drag = None
+        if "pinch" in cfg:
+            p = dict(cfg["pinch"])
+            drag_keys = inject.parse_keys(p.pop("modifier", "super"))
+            pinch = engine.Pinch(p.pop("on", 0.3), p.pop("off", 0.45))
+            drag = engine.Drag(**p)  # leftover (misspelled) keys raise TypeError
     except (TypeError, ValueError) as e:
         sys.exit(f"bad config {path}: {e}")
     print(f"config {path}\nhold an open palm to arm, then make a gesture. {'q in the window' if args.preview else 'Ctrl+C'} quits.")
-    fired, fired_at, was_armed, window_open = None, 0, False, False
+    fired, fired_at, was_armed, window_open, dragging = None, 0, False, False, False
+    tips = lambda h: ((h[4].x + h[8].x) / 2, (h[4].y + h[8].y) / 2)  # between thumb and index tip
     try:
-        for now, label, x, frame, hand in vision.stream(MODEL, args.camera, cfg.get("fps", 15), cfg.get("idle_fps", 5)):
-            tracking = eng.armed and not eng.cooling(now)  # no swipes during cooldown: the hand is moving back
-            gesture = eng.update(swipe.update(x if tracking else None, now) or label, now)
+        for now, label, wrist, frame, hand in vision.stream(MODEL, args.camera, cfg.get("fps", 15), cfg.get("idle_fps", 5)):
+            gesture = None
+            closed = pinch.update(hand) if pinch else False
+            try:
+                if dragging and not closed:
+                    dragging = False
+                    act.input().drag(drag_keys, False)
+                    print("dropped")
+                elif dragging:
+                    act.input().move(*drag.update(tips(hand)))
+                elif closed and eng.armed and not eng.cooling(now):
+                    act.input().drag(drag_keys, True)
+                    dragging = True
+                    drag.start(tips(hand))
+                    print("dragging")
+            except Exception as e:
+                print(f"pinch-drag failed: {e}", file=sys.stderr)
+                pinch = None  # stop trying; the finally below releases anything still held
+            if dragging or closed:  # a pinch is never a gesture or a swipe
+                if eng.armed:
+                    eng.keep_armed(now)
+                swipe.update(None, now)
+            else:
+                tracking = eng.armed and not eng.cooling(now)  # no swipes during cooldown: the hand is moving back
+                gesture = eng.update(swipe.update(wrist if tracking else None, now) or label, now)
             if eng.armed and not was_armed:
                 print("armed")
             was_armed = eng.armed
@@ -127,7 +157,7 @@ def run(args):
                     print(f"{gesture} failed: {e}", file=sys.stderr)
             if args.preview:
                 shown = fired if now - fired_at < 1.5 else None
-                image = vision.draw(frame, hand, label, eng.state(now), shown)
+                image = vision.draw(frame, hand, "pinch" if closed else label, "dragging" if dragging else eng.state(now), shown)
                 if window_open:
                     cv2.imshow("wavebind", image)
                 else:
@@ -139,6 +169,11 @@ def run(args):
                     break  # q, Esc, or the window was closed
     except KeyboardInterrupt:
         pass
+    except RuntimeError as e:
+        sys.exit(f"error: {e}")
+    finally:
+        if dragging:  # never leave Super or the mouse button held down
+            act.input().drag(drag_keys, False)
 
 
 def main():

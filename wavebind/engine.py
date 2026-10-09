@@ -1,4 +1,5 @@
 """Gesture -> fire decisions. Pure logic, times in seconds, no camera."""
+import math
 from collections import deque
 
 
@@ -26,6 +27,9 @@ class Engine:
     @property
     def armed(self):
         return self.armed_until is not None
+
+    def keep_armed(self, now):
+        self.armed_until = now + self.armed_for
 
     def cooling(self, now):
         return self.cooldown_until is not None and now < self.cooldown_until
@@ -73,22 +77,76 @@ class Engine:
 
 
 class Swipe:
-    """Wrist moving `distance` (fraction of frame width) within `window` s -> swipe_left / swipe_right.
-    Directions are from the user's point of view; the raw camera image is not mirrored."""
+    """Wrist moving `distance` (fraction of frame width or height) within `window` s ->
+    swipe_left / swipe_right / swipe_up / swipe_down, from the user's point of view (the raw camera
+    image is not mirrored). The hand must still be in view `confirm_frames` frames later, so dropping
+    your hand out of frame is not a swipe down."""
 
-    def __init__(self, distance=0.25, window=0.4):
-        self.distance, self.window = distance, window
+    def __init__(self, distance=0.25, window=0.4, confirm_frames=2):
+        self.distance, self.window, self.confirm_frames = distance, window, confirm_frames
         self.track = deque()
+        self.pending, self.seen = None, 0
 
-    def update(self, x, now):
-        if x is None:
+    def update(self, pos, now):
+        """pos = (x, y) of the wrist, or None with no hand (or when swipes shouldn't count)."""
+        if pos is None:
             self.track.clear()
+            self.pending = None
             return None
-        self.track.append((now, x))
+        if self.pending:
+            self.seen += 1
+            if self.seen < self.confirm_frames:
+                return None
+            direction, self.pending = self.pending, None
+            return direction
+        self.track.append((now, pos))
         while now - self.track[0][0] > self.window:
             self.track.popleft()
-        dx = x - self.track[0][1]
-        if abs(dx) < self.distance:
+        (x0, y0), (x, y) = self.track[0][1], pos
+        dx, dy = x - x0, y - y0
+        if max(abs(dx), abs(dy)) < self.distance:
             return None
         self.track.clear()
-        return "swipe_left" if dx > 0 else "swipe_right"  # image x grows toward the user's left
+        self.seen = 0
+        if abs(dx) >= abs(dy):
+            self.pending = "swipe_left" if dx > 0 else "swipe_right"  # image x grows toward the user's left
+        else:
+            self.pending = "swipe_up" if dy < 0 else "swipe_down"
+        return None
+
+
+class Pinch:
+    """Thumb tip touching index tip, relative to palm size (wrist to middle knuckle) so it works at
+    any distance from the camera. Closes below `on`, opens above `off`, so it doesn't flicker."""
+
+    def __init__(self, on=0.3, off=0.45):
+        self.on, self.off, self.closed = on, off, False
+
+    def update(self, hand):
+        if hand is None:
+            self.closed = False
+            return False
+        xy = lambda p: (p.x, p.y)
+        ratio = math.dist(xy(hand[4]), xy(hand[8])) / max(math.dist(xy(hand[0]), xy(hand[9])), 1e-6)
+        self.closed = ratio < (self.off if self.closed else self.on)
+        return self.closed
+
+
+class Drag:
+    """Pinch-hand motion -> pointer deltas in pixels. `gain` = pixels per full frame width of hand
+    travel; x is mirrored so moving your hand right moves the pointer right. `smooth` (0..1) is how
+    much of each new position is trusted: lower = steadier but laggier."""
+
+    def __init__(self, gain=1500, smooth=0.5, aspect=640 / 480):
+        self.gain, self.smooth, self.aspect = gain, smooth, aspect
+        self.pos = None
+
+    def start(self, pos):
+        self.pos = pos
+
+    def update(self, pos):
+        x = self.pos[0] + self.smooth * (pos[0] - self.pos[0])
+        y = self.pos[1] + self.smooth * (pos[1] - self.pos[1])
+        dx, dy = (self.pos[0] - x) * self.gain, (y - self.pos[1]) * self.gain / self.aspect
+        self.pos = (x, y)
+        return dx, dy

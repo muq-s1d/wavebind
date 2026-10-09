@@ -1,4 +1,4 @@
-"""Camera -> MediaPipe GestureRecognizer -> (label, wrist x, frame, landmarks) per frame."""
+"""Camera -> MediaPipe GestureRecognizer -> (label, wrist (x, y), frame, landmarks) per frame."""
 import contextlib
 import os
 import sys
@@ -25,10 +25,12 @@ def quiet_stderr():
 
 
 def stream(model, camera=0, fps=15, idle_fps=5):
-    """Yield (now, label, wrist_x, frame, landmarks) at most `fps` times per second, `idle_fps` while
-    no hand is visible. label/wrist_x/landmarks are None with no hand. Skipped frames are grabbed,
+    """Yield (now, label, wrist, frame, landmarks) at most `fps` times per second, `idle_fps` while
+    no hand is visible. wrist is (x, y) in 0..1 image coordinates. label/wrist/landmarks are None with no hand. Skipped frames are grabbed,
     not decoded, to save CPU."""
     cap = cv2.VideoCapture(camera)
+    if not cap.isOpened():
+        raise RuntimeError(f"can't open camera {camera} (in use by another app?)")
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
     options = vision.GestureRecognizerOptions(
@@ -59,12 +61,13 @@ def stream(model, camera=0, fps=15, idle_fps=5):
                     continue
                 hand = r.hand_landmarks[0]
                 label = r.gestures[0][0].category_name if r.gestures and r.gestures[0] else None
-                yield now, label or None, hand[0].x, frame, hand
+                yield now, label or None, (hand[0].x, hand[0].y), frame, hand
         finally:
             cap.release()
 
 
-COLORS = {"idle": (160, 160, 160), "arming": (0, 200, 255), "armed": (0, 220, 0), "cooldown": (255, 120, 0)}
+COLORS = {"idle": (160, 160, 160), "arming": (0, 200, 255), "armed": (0, 220, 0), "cooldown": (255, 120, 0),
+          "dragging": (255, 0, 255)}
 
 
 def draw(frame, hand, label, state, fired=None):
