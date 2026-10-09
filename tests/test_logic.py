@@ -51,13 +51,14 @@ class Bindings(unittest.TestCase):
 
 
 class PortalToken(unittest.TestCase):
-    def start(self, token, remember):
+    def start(self, token, remember, pointer=False, granted=None):
         p = inject.Portal.__new__(inject.Portal)  # skip __init__, no DBus
-        p.token_file, p.remember, sent = token, remember, {}
+        p.token_file, p.remember, p.pointer, sent = token, remember, pointer, {}
 
         def request(method, sig, *args, **opts):
             sent[method] = opts
-            return {"session_handle": "/s", "restore_token": "NEW"}
+            types = opts.get("types", sent.get("SelectDevices", {}).get("types", ("u", 1)))[1]
+            return {"session_handle": "/s", "restore_token": "NEW", "devices": types if granted is None else granted}
 
         p._request = request
         p.start()
@@ -66,23 +67,48 @@ class PortalToken(unittest.TestCase):
     def test_forget(self):
         with tempfile.TemporaryDirectory() as d:
             token = Path(d) / "t"
-            token.write_text("OLD")
+            token.write_text("1 OLD")
             opts = self.start(token, remember=False)
             self.assertEqual(opts["persist_mode"], ("u", 0))
             self.assertNotIn("restore_token", opts)
             self.assertFalse(token.exists())  # an old grant is deleted
 
+    def test_pointer_only_when_asked(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(self.start(Path(d) / "t", True)["types"], ("u", 1))  # keyboard only
+            self.assertEqual(self.start(Path(d) / "t", True, pointer=True)["types"], ("u", 3))  # + pointer
+
     def test_remember(self):
         with tempfile.TemporaryDirectory() as d:
             token = Path(d) / "t"
-            token.write_text("OLD")
+            token.write_text("1 OLD")
             token.chmod(0o644)
             opts = self.start(token, remember=True)
             self.assertEqual(opts["persist_mode"], ("u", 2))
             self.assertEqual(opts["restore_token"], ("s", "OLD"))
-            self.assertEqual(token.read_text(), "NEW")
+            self.assertEqual(token.read_text(), "1 NEW")
             self.assertEqual(token.stat().st_mode & 0o777, 0o600)
 
+    def test_keyboard_grant_not_reused_for_pointer(self):
+        with tempfile.TemporaryDirectory() as d:
+            token = Path(d) / "t"
+            token.write_text("1 OLD")  # saved when only the keyboard was asked for
+            opts = self.start(token, remember=True, pointer=True)
+            self.assertNotIn("restore_token", opts)  # so the desktop asks again
+            self.assertEqual(token.read_text(), "3 NEW")
+
+    def test_old_format_token_not_reused(self):
+        with tempfile.TemporaryDirectory() as d:
+            token = Path(d) / "t"
+            token.write_text("OLD")
+            self.assertNotIn("restore_token", self.start(token, remember=True))
+
+    def test_missing_device_is_an_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            token = Path(d) / "t"
+            with self.assertRaisesRegex(PermissionError, "mouse pointer"):
+                self.start(token, remember=True, pointer=True, granted=1)
+            self.assertFalse(token.exists())
 
 
 def feed(eng, frames, t=0.0, dt=0.1):
@@ -180,22 +206,131 @@ class EngineTest(unittest.TestCase):
 
 
 class SwipeTest(unittest.TestCase):
-    def test_directions(self):
-        for xs, want in (([0.3, 0.45, 0.6], "swipe_left"), ([0.7, 0.55, 0.4], "swipe_right")):
-            sw = engine.Swipe()
-            got = [sw.update(x, i * 0.1) for i, x in enumerate(xs)]
-            self.assertEqual(got[-1], want, xs)
+    def run_track(self, points, extra=2):
+        """Hand already settled in view, then wrist points 0.1 s apart, then the last point held `extra` frames."""
+        sw, got = engine.Swipe(), []
+        for i, pt in enumerate([points[0]] * 4 + points + [points[-1]] * extra):
+            got.append(sw.update(pt, i * 0.1))
+        return [g for g in got if g]
+
+    def test_four_directions(self):
+        # raw camera image: x grows toward the user's left, y grows downward
+        self.assertEqual(self.run_track([(0.3, 0.5), (0.45, 0.5), (0.6, 0.5)]), ["swipe_left"])
+        self.assertEqual(self.run_track([(0.7, 0.5), (0.55, 0.5), (0.4, 0.5)]), ["swipe_right"])
+        self.assertEqual(self.run_track([(0.5, 0.7), (0.5, 0.55), (0.5, 0.4)]), ["swipe_up"])
+        self.assertEqual(self.run_track([(0.5, 0.3), (0.5, 0.45), (0.5, 0.6)]), ["swipe_down"])
+
+    def test_dominant_axis_wins(self):
+        self.assertEqual(self.run_track([(0.3, 0.5), (0.45, 0.55), (0.6, 0.6)]), ["swipe_left"])
+
+    def test_waits_for_confirmation(self):
+        self.assertEqual(self.run_track([(0.3, 0.5), (0.45, 0.5), (0.6, 0.5)], extra=1), [])
+
+    def test_raising_hand_into_frame_is_not_a_swipe(self):
+        sw = engine.Swipe()
+        got = [sw.update(pt, i * 0.1) for i, pt in enumerate([None, (0.5, 0.9), (0.5, 0.7), (0.5, 0.5), (0.5, 0.5), (0.5, 0.5)])]
+        self.assertEqual([g for g in got if g], [])
+
+    def test_inactive_tracks_presence_only(self):
+        sw = engine.Swipe()
+        for i in range(4):
+            sw.update((0.3, 0.5), i * 0.1, active=False)  # hand settled while e.g. arming
+        got = [sw.update(pt, 0.4 + i * 0.1) for i, pt in enumerate([(0.3, 0.5), (0.45, 0.5), (0.6, 0.5), (0.6, 0.5), (0.6, 0.5)])]
+        self.assertEqual([g for g in got if g], ["swipe_left"])  # no extra settle delay once active
+
+    def test_hand_leaving_frame_is_not_a_swipe(self):
+        sw = engine.Swipe()
+        pts = [(0.5, 0.5)] * 4 + [(0.5, 0.65), (0.5, 0.8), None, None]
+        got = [sw.update(pt, i * 0.1) for i, pt in enumerate(pts)]
+        self.assertEqual([g for g in got if g], [])  # dropped hand: crossed the threshold, then vanished
 
     def test_slow_drift_is_not_a_swipe(self):
-        sw = engine.Swipe()
-        got = [sw.update(0.3 + i * 0.02, i * 0.1) for i in range(20)]  # 0.38 total over 2 s
-        self.assertEqual([g for g in got if g], [])
+        self.assertEqual(self.run_track([(0.3 + i * 0.02, 0.5) for i in range(20)]), [])  # 0.38 over 2 s
 
     def test_hand_lost_resets(self):
         sw = engine.Swipe()
-        sw.update(0.3, 0.0)
+        sw.update((0.3, 0.5), 0.0)
         sw.update(None, 0.1)
-        self.assertIsNone(sw.update(0.6, 0.2))
+        self.assertIsNone(sw.update((0.6, 0.5), 0.2))
+
+
+def hand(thumb_index):
+    """21 fake landmarks: palm size 0.2 (wrist to middle knuckle), thumb and index tips `thumb_index` apart."""
+    from types import SimpleNamespace as P
+
+    pts = [P(x=0.5, y=0.5) for _ in range(21)]
+    pts[0], pts[9] = P(x=0.5, y=0.7), P(x=0.5, y=0.5)
+    pts[4], pts[8] = P(x=0.5, y=0.4), P(x=0.5 + thumb_index, y=0.4)
+    return pts
+
+
+class PinchTest(unittest.TestCase):
+    def test_hysteresis(self):
+        p = engine.Pinch(frames=1)  # closes below 0.25 * palm (0.05), opens above 0.45 * palm (0.09)
+        self.assertEqual([p.update(hand(d)) for d in (0.15, 0.04, 0.08, 0.08, 0.1, 0.06)],
+                         [False, True, True, True, False, False])
+
+    def test_needs_frames_in_a_row(self):
+        p = engine.Pinch()  # frames=3
+        self.assertEqual([p.update(hand(d)) for d in (0.04, 0.04, 0.15, 0.04, 0.04, 0.04)],
+                         [False, False, False, False, False, True])
+
+    def test_no_hand_opens(self):
+        p = engine.Pinch()
+        p.update(hand(0.02))
+        self.assertFalse(p.update(None))
+
+
+class DragTest(unittest.TestCase):
+    def test_mirrored_and_scaled(self):
+        d = engine.Drag(gain=1000, smooth=1.0, aspect=1.0)
+        d.start((0.5, 0.5))
+        dx, dy = d.update((0.4, 0.6))  # image x down = hand moved to the user's right; image y down = down
+        self.assertAlmostEqual(dx, 100)
+        self.assertAlmostEqual(dy, 100)
+
+    def test_smoothing_converges(self):
+        d = engine.Drag(gain=1000, smooth=0.5, aspect=1.0)
+        d.start((0.5, 0.5))
+        total = sum(d.update((0.4, 0.5))[0] for _ in range(30))
+        self.assertAlmostEqual(total, 100, places=3)  # same total travel, just spread out
+
+
+class PointerTest(unittest.TestCase):
+    def test_filter_steady_when_jittering(self):
+        f = engine.OneEuro()
+        out = [f((500 + (3 if i % 2 else -3), 500), i / 30)[0] for i in range(60)]  # +-3 px jitter at 30 fps
+        self.assertLess(max(out[30:]) - min(out[30:]), 2)  # filtered spread under 2 px (raw: 6 px)
+
+    def test_filter_follows_fast_moves(self):
+        f = engine.OneEuro()
+        for i in range(30):
+            f((0.0, 0.0), i / 30)
+        for i in range(30, 45):  # jump 1000 px and hold for 0.5 s
+            x = f((1000.0, 0.0), i / 30)[0]
+        self.assertGreater(x, 950)
+
+    def test_slow_is_precise_fast_covers_screen(self):
+        def travel(seconds):  # hand moves 0.1 frame widths to your right over `seconds`, 30 fps
+            ptr = engine.Pointer(min_cutoff=1000)  # filter effectively off, to test the gain curve alone
+            ptr.start((0.5, 0.5), 0.0)
+            steps = round(seconds * 30)
+            return sum(ptr.update((0.5 - 0.1 * i / steps, 0.5), i / 30)[0] for i in range(1, steps + 1))
+        slow, fast = travel(2.0), travel(0.1)  # 0.05 vs 1.0 frame widths per second
+        self.assertAlmostEqual(slow, 120, delta=1)  # 0.1 * slow_gain 1200
+        self.assertAlmostEqual(fast, 415.4, delta=2)  # 1.0 fw/s (minus a hair of filter lag): gain 1200 + (0.8 / 1.3) * 4800 = 4154
+        self.assertGreater(slow, 0)  # moved to your right -> pointer right
+
+    def test_vertical(self):
+        ptr = engine.Pointer(min_cutoff=1000)
+        ptr.start((0.5, 0.5), 0.0)
+        dx, dy = ptr.update((0.5, 0.55), 1.0)
+        self.assertAlmostEqual(dx, 0)
+        self.assertGreater(dy, 0)  # hand down -> pointer down
+
+    def test_quick_click(self):
+        p = engine.Pinch(0.3, 0.45, frames=1)
+        self.assertEqual([p.update(hand(d)) for d in (0.15, 0.05, 0.15)], [False, True, False])  # one-frame pinch
 
 
 if __name__ == "__main__":

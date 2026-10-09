@@ -29,8 +29,20 @@ wavebind run             # headless; Ctrl+C quits
 3. Holding a gesture fires it once; change hand shape to fire it again. After a swipe, swipes pause
    for 1 s so moving your hand back doesn't count as the opposite swipe.
 
-Built-in gestures: `Closed_Fist`, `Open_Palm` (the arm gesture), `Pointing_Up`, `Thumb_Up`,
-`Thumb_Down`, `Victory`, `ILoveYou`, plus `swipe_left` / `swipe_right` (from your point of view).
+Default bindings (GNOME shortcuts; all changeable in the config):
+
+| Gesture (after arming) | Does |
+|---|---|
+| swipe left / right | next / previous workspace (phone-style) |
+| swipe up / down | overview / minimize window |
+| ✊ `Closed_Fist` | play / pause |
+| 👍 `Thumb_Up` / 👎 `Thumb_Down` | volume up / down, repeats while held |
+| ✌ `Victory` | screenshot tool |
+| 🤟 `ILoveYou` | maximize / restore |
+| 🤏 pinch + move | drag the window under the mouse pointer; open your fingers to drop |
+| ☝ `Pointing_Up` | pointer mode: the mouse follows your hand, pinch to click (hold to drag or select); lower your hand to stop |
+
+`Open_Palm` is the arm gesture.
 
 CPU, measured on a 12-core laptop: about 25% of one core while no hand is in view (`idle_fps = 5`),
 more while tracking a hand (`fps = 15`). Lower either in the config to trade reaction time for CPU.
@@ -55,8 +67,9 @@ asks for that the first time one fires, never earlier. The defaults use keys for
 for it.
 
 - **GNOME / KDE:** the desktop shows a "Remote Desktop" dialog. Despite the name, nothing goes over the
-  network and nothing can see your screen: wavebind asks for the keyboard only, through the local
-  xdg-desktop-portal. GNOME shows an indicator in the top bar while it is active.
+  network and nothing can see your screen: wavebind asks for the keyboard, plus the mouse pointer only
+  if the `[pinch]` or `[pointer]` section is in your config, through the local xdg-desktop-portal. GNOME shows an
+  indicator in the top bar while it is active.
 - `remember_key_permission = true` (default): allow once. The grant is saved to
   `~/.local/share/wavebind/portal_token` (readable only by you) so later launches don't ask.
   Delete that file to make wavebind ask again.

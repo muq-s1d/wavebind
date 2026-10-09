@@ -1,4 +1,4 @@
-"""Camera -> MediaPipe GestureRecognizer -> (label, wrist x, frame, landmarks) per frame."""
+"""Camera -> MediaPipe GestureRecognizer -> (label, wrist (x, y), frame, landmarks) per frame."""
 import contextlib
 import os
 import sys
@@ -24,17 +24,21 @@ def quiet_stderr():
         os.close(saved)
 
 
-def stream(model, camera=0, fps=15, idle_fps=5):
-    """Yield (now, label, wrist_x, frame, landmarks) at most `fps` times per second, `idle_fps` while
-    no hand is visible. label/wrist_x/landmarks are None with no hand. Skipped frames are grabbed,
+def stream(model, camera=0, rates=None):
+    """Yield (now, label, wrist, frame, landmarks) at most rates["fps"] times per second,
+    rates["idle_fps"] while no hand is visible. `rates` is read every frame, so the caller can change it. wrist is (x, y) in 0..1 image coordinates. label/wrist/landmarks are None with no hand. Skipped frames are grabbed,
     not decoded, to save CPU."""
-    cap = cv2.VideoCapture(camera)
+    with quiet_stderr():  # OpenCV logs its own errors for a busy camera; ours below is clearer
+        cap = cv2.VideoCapture(camera)
+    if not cap.isOpened():
+        raise RuntimeError(f"can't open camera {camera} (in use by another app?)")
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
     options = vision.GestureRecognizerOptions(
         base_options=BaseOptions(model_asset_path=str(model)), running_mode=vision.RunningMode.VIDEO
     )
-    last_ms, next_at, interval = 0, 0.0, 1 / idle_fps
+    rates = rates or {"fps": 15, "idle_fps": 5}
+    last_ms, next_at, interval = 0, 0.0, 1 / rates["idle_fps"]
     with quiet_stderr():  # model load and first inference are where all the log spam happens
         rec = vision.GestureRecognizer.create_from_options(options)
         rec.recognize_for_video(mp.Image(image_format=mp.ImageFormat.SRGB, data=np.zeros((480, 640, 3), np.uint8)), 0)
@@ -53,18 +57,19 @@ def stream(model, camera=0, fps=15, idle_fps=5):
                 ms = last_ms = max(int(now * 1000), last_ms + 1)  # VIDEO mode needs strictly increasing timestamps
                 image = mp.Image(image_format=mp.ImageFormat.SRGB, data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
                 r = rec.recognize_for_video(image, ms)
-                interval = 1 / (fps if r.hand_landmarks else idle_fps)
+                interval = 1 / rates["fps" if r.hand_landmarks else "idle_fps"]
                 if not r.hand_landmarks:
                     yield now, None, None, frame, None
                     continue
                 hand = r.hand_landmarks[0]
                 label = r.gestures[0][0].category_name if r.gestures and r.gestures[0] else None
-                yield now, label or None, hand[0].x, frame, hand
+                yield now, label or None, (hand[0].x, hand[0].y), frame, hand
         finally:
             cap.release()
 
 
-COLORS = {"idle": (160, 160, 160), "arming": (0, 200, 255), "armed": (0, 220, 0), "cooldown": (255, 120, 0)}
+COLORS = {"idle": (160, 160, 160), "arming": (0, 200, 255), "armed": (0, 220, 0), "cooldown": (255, 120, 0),
+          "dragging": (255, 0, 255), "pointer": (255, 255, 0)}
 
 
 def draw(frame, hand, label, state, fired=None):

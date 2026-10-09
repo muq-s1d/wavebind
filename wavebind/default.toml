@@ -31,15 +31,52 @@ cooldown = 0.5
 swipe_cooldown = 1.0
 stable_frames = 3
 
-# Swipe while armed: wrist moves `distance` (fraction of frame width) within `window` s.
+# Swipe while armed: wrist moves `distance` (fraction of frame width or height) within `window` s.
+# The hand must be in view `settle` s first (raising it into frame isn't a swipe up) and still in
+# view confirm_frames frames later (dropping it out of frame isn't a swipe down).
 [swipe]
 distance = 0.25
 window = 0.4
+confirm_frames = 2
+settle = 0.3
+
+# Pinch to drag a window: arm, pinch thumb + index, move your hand, open to drop. Holds `modifier` +
+# left mouse button, which on GNOME drags the window under the mouse pointer.
+# Needs mouse-pointer permission (asked once). Delete this section to disable it and stay keyboard-only.
+[pinch]
+modifier = "super"
+on = 0.25      # pinch closes below this thumb-to-index distance (fraction of palm size)
+off = 0.45     # and opens above this
+frames = 3     # frames in a row below `on` before a drag starts
+gain = 1500    # pointer pixels per full frame width of hand movement
+smooth = 0.5   # 0..1: lower = steadier but laggier
+
+# Pointer mode: arm, then point up. The mouse follows your hand without clicking; pinch thumb + index
+# to press the left button and open to release (a click, or hold to drag / select). Lower your hand
+# out of view to stop. Needs mouse-pointer permission (asked once). Delete this section to disable it.
+[pointer]
+gesture = "Pointing_Up"
+# Like a trackpad: move slowly for precision, flick to cross the screen. Gains are pointer pixels
+# per full frame width of hand travel; speeds are frame widths per second.
+slow_gain = 1200   # gain at or below slow_speed
+fast_gain = 6000   # gain at or above fast_speed
+slow_speed = 0.2
+fast_speed = 1.5
+min_cutoff = 1.0   # jitter filter, Hz: lower = steadier when still, but laggier
+beta = 0.02        # jitter filter: higher = less lag on fast moves
+click_on = 0.3     # pinch below this (fraction of palm size) presses the button, on the first frame
+click_off = 0.45   # and above this releases it
+fps = 30           # frames analysed per second while pointing
+lost_after = 0.5   # seconds without a hand before pointer mode ends
 
 [bindings]
 # Like a phone: swipe left to go to the workspace on the right.
 swipe_left = { keys = "super+Page_Down" }    # GNOME: next workspace
 swipe_right = { keys = "super+Page_Up" }     # GNOME: previous workspace
+swipe_up = { keys = "super" }                # GNOME: Activities overview
+swipe_down = { keys = "super+h" }            # GNOME: minimize window
+Victory = { keys = "Print" }                 # GNOME: screenshot tool
+ILoveYou = { keys = "alt+F10" }              # GNOME: maximize / restore
 Closed_Fist = { media = "PlayPause" }
 # Volume keys, so the desktop shows its volume popup and handles mute. Hold to keep going.
 # Without key permission instead: { cmd = "wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 5%+", repeat = 0.3 }
