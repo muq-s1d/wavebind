@@ -12,6 +12,25 @@
 # true:  remember the grant (token saved with mode 0600) until revoked in Settings.
 remember_key_permission = false
 
+# Frames analyzed per second with a hand in view, and with none (idle).
+# Lower = less CPU, slower reactions.
+fps = 15
+idle_fps = 5
+
+# Arming: hold arm_gesture for arm_hold s, then you have armed_for s to make one gesture.
+# A gesture must be seen stable_frames frames in a row; after firing, cooldown s of nothing.
+[engine]
+arm_gesture = "Open_Palm"
+arm_hold = 0.5
+armed_for = 2.0
+cooldown = 1.0
+stable_frames = 3
+
+# Swipe while armed: wrist moves `distance` (fraction of frame width) within `window` s.
+[swipe]
+distance = 0.25
+window = 0.4
+
 [bindings]
 swipe_left = { keys = "super+Page_Up" }      # GNOME: previous workspace
 swipe_right = { keys = "super+Page_Down" }   # GNOME: next workspace

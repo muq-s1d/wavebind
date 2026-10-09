@@ -4,7 +4,7 @@ Bind webcam hand gestures to desktop actions. Linux first (Wayland-native), Wind
 Everything runs on your machine. No video leaves it, there is no telemetry, and after the one-time
 `wavebind setup` it never touches the network.
 
-> Status: early. Setup, environment check and the action runner work; the gesture loop is next.
+> Status: early. Built-in gestures and swipes work; recording your own gestures is next.
 
 ## Install
 Needs Python 3.11+ on a glibc distro (MediaPipe has no musl/Alpine wheels).
@@ -16,6 +16,22 @@ python3 -m venv .venv
 .venv/bin/wavebind setup    # one-time 8.4 MB model download, checksum verified
 .venv/bin/wavebind check    # model, camera, key backend
 ```
+
+## Use
+```sh
+wavebind run --preview   # camera window with landmarks and state; q quits
+wavebind run             # headless; Ctrl+C quits
+```
+
+1. **Arm:** hold an open palm for 0.5 s (preview border turns green).
+2. **Act:** within 2 s, make a gesture (held for 3 frames) or swipe your open palm left/right.
+3. It fires once, then ignores everything for 1 s. Nothing fires unless armed.
+
+Built-in gestures: `Closed_Fist`, `Open_Palm` (the arm gesture), `Pointing_Up`, `Thumb_Up`,
+`Thumb_Down`, `Victory`, `ILoveYou`, plus `swipe_left` / `swipe_right` (from your point of view).
+
+CPU, measured on a 12-core laptop: about 25% of one core while no hand is in view (`idle_fps = 5`),
+more while tracking a hand (`fps = 15`). Lower either in the config to trade reaction time for CPU.
 
 ## Config
 Defaults live in [`wavebind/default.toml`](wavebind/default.toml). To customize, copy it to
