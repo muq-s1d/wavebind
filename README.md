@@ -48,8 +48,10 @@ CPU, measured on a 12-core laptop: about 25% of one core while no hand is in vie
 more while tracking a hand (`fps = 15`). Lower either in the config to trade reaction time for CPU.
 
 ## Config
-Defaults live in [`wavebind/default.toml`](wavebind/default.toml). To customize, copy it to
-`~/.config/wavebind/config.toml`. Each gesture binds to exactly one of:
+Defaults live in [`wavebind/default.toml`](wavebind/default.toml). Put your changes in
+`~/.config/wavebind/config.toml`; it is merged on top of the defaults, so it only needs what you
+change. `Victory = false` under `[bindings]` unbinds a default; a top-level `pinch = false` turns
+pinch-drag off. Each gesture binds to exactly one of:
 
 ```toml
 [bindings]

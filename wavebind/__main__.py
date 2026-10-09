@@ -25,15 +25,24 @@ def model_ok():
 
 
 def load_config():
-    path = CONFIG if CONFIG.exists() else DEFAULT_CONFIG
-    return path, tomllib.loads(path.read_text())
+    """Defaults, with the user's config merged on top: tables are merged key by key, so a user file
+    only needs what it changes. `Gesture = false` in [bindings] unbinds a default; a top-level
+    `pinch = false` turns pinch-drag off."""
+    cfg = tomllib.loads(DEFAULT_CONFIG.read_text())
+    if not CONFIG.exists():
+        return DEFAULT_CONFIG, cfg
+    for key, value in tomllib.loads(CONFIG.read_text()).items():
+        both_tables = isinstance(value, dict) and isinstance(cfg.get(key), dict)
+        cfg[key] = {**cfg[key], **value} if both_tables else value
+    cfg["bindings"] = {g: b for g, b in cfg["bindings"].items() if b is not False}
+    return CONFIG, cfg
 
 
 def actions(cfg):
     from . import inject
 
     remember = cfg.get("remember_key_permission", True)
-    return inject.Actions(cfg["bindings"], PORTAL_TOKEN, remember, pointer="pinch" in cfg)
+    return inject.Actions(cfg["bindings"], PORTAL_TOKEN, remember, pointer=bool(cfg.get("pinch")))
 
 
 def setup(args):
@@ -109,7 +118,7 @@ def run(args):
         eng = engine.Engine(cfg["bindings"], repeat, **cfg.get("engine", {}))
         swipe = engine.Swipe(**cfg.get("swipe", {}))
         pinch = drag = None
-        if "pinch" in cfg:
+        if cfg.get("pinch"):
             p = dict(cfg["pinch"])
             drag_keys = inject.parse_keys(p.pop("modifier", "super"))
             pinch = engine.Pinch(p.pop("on", 0.25), p.pop("off", 0.45), p.pop("frames", 3))
