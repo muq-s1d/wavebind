@@ -310,31 +310,23 @@ class PointerTest(unittest.TestCase):
             x = f((1000.0, 0.0), i / 30)[0]
         self.assertGreater(x, 950)
 
-    def test_box_maps_to_whole_screen(self):
-        ptr = engine.Pointer((1920, 1080), box=0.6)
-        self.assertEqual(ptr.target((0.5, 0.5)), (959.5, 539.5))  # centre -> centre
-        self.assertEqual(ptr.target((0.8, 0.2)), (0.0, 0.0))  # box edge, image right = your left -> top-left
-        self.assertEqual(ptr.target((0.0, 1.0)), (1919.0, 1079.0))  # beyond the box clamps to the corner
+    def test_slow_is_precise_fast_covers_screen(self):
+        def travel(seconds):  # hand moves 0.1 frame widths to your right over `seconds`, 30 fps
+            ptr = engine.Pointer(min_cutoff=1000)  # filter effectively off, to test the gain curve alone
+            ptr.start((0.5, 0.5), 0.0)
+            steps = round(seconds * 30)
+            return sum(ptr.update((0.5 - 0.1 * i / steps, 0.5), i / 30)[0] for i in range(1, steps + 1))
+        slow, fast = travel(2.0), travel(0.1)  # 0.05 vs 1.0 frame widths per second
+        self.assertAlmostEqual(slow, 120, delta=1)  # 0.1 * slow_gain 1200
+        self.assertAlmostEqual(fast, 415.4, delta=2)  # 1.0 fw/s (minus a hair of filter lag): gain 1200 + (0.8 / 1.3) * 4800 = 4154
+        self.assertGreater(slow, 0)  # moved to your right -> pointer right
 
-    def test_start_homes_then_moves(self):
-        ptr = engine.Pointer((1920, 1080))
-        home, there = ptr.start((0.5, 0.5), 0.0)
-        self.assertLessEqual(home[0], -1920)
-        self.assertLessEqual(home[1], -1080)  # far enough past the corner to clamp there
-        self.assertEqual(there, (959.5, 539.5))
-        total = list(there)
-        for i in range(1, 60):  # hand moves to the box's top-left; deltas add up to the new spot
-            dx, dy = ptr.update((0.8, 0.2), i / 30)
-            total[0] += dx
-            total[1] += dy
-        self.assertAlmostEqual(total[0], ptr.pos[0])
-        self.assertLess(total[0], 5)
-        self.assertLess(total[1], 5)
-
-    def test_screen_size(self):
-        self.assertEqual(inject.screen_size("Screen 0: minimum 16 x 16, current 2560 x 1440, maximum 32767"), (2560, 1440))
-        with self.assertRaises(ValueError):
-            inject.screen_size("nothing useful")
+    def test_vertical(self):
+        ptr = engine.Pointer(min_cutoff=1000)
+        ptr.start((0.5, 0.5), 0.0)
+        dx, dy = ptr.update((0.5, 0.55), 1.0)
+        self.assertAlmostEqual(dx, 0)
+        self.assertGreater(dy, 0)  # hand down -> pointer down
 
     def test_quick_click(self):
         p = engine.Pinch(0.3, 0.45, frames=1)

@@ -119,8 +119,7 @@ def run(args):
             pointer_gesture, lost_after = q.pop("gesture", "Pointing_Up"), q.pop("lost_after", 0.5)
             pointer_fps = q.pop("fps", 30)
             click = engine.Pinch(q.pop("click_on", 0.3), q.pop("click_off", 0.45), frames=1)  # quick pinches count
-            screen = q.pop("screen", "auto")
-            pointer = engine.Pointer(inject.screen_size() if screen == "auto" else tuple(screen), **q)
+            pointer = engine.Pointer(**q)
         gestures = list(cfg["bindings"]) + ([pointer_gesture] if pointer else [])
         repeat = {g: b["repeat"] for g, b in cfg["bindings"].items() if "repeat" in b}
         eng = engine.Engine(gestures, repeat, **cfg.get("engine", {}))
@@ -198,13 +197,8 @@ def run(args):
                     pointing, seen_at = True, now
                     rates["fps"] = pointer_fps  # full speed while pointing: smoother, and quick pinches aren't missed
                     click.update(None)  # start with the button up
-                    try:
-                        for dx, dy in pointer.start(knuckle(hand), now):
-                            act.input().move(dx, dy)
-                        print("pointer on")
-                    except Exception as e:
-                        print(f"pointer failed: {e}", file=sys.stderr)
-                        stop_pointing("error")
+                    pointer.start(knuckle(hand), now)
+                    print("pointer on")
                 else:
                     try:
                         act.fire(gesture)

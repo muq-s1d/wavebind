@@ -195,30 +195,29 @@ class OneEuro:
 
 
 class Pointer:
-    """Hand position inside a centred `box` (fraction of the camera frame) maps to the whole screen,
-    like a drawing tablet, so every corner is reachable. The portal only offers relative motion, so
-    start() first pushes the pointer far past the top-left corner (it stops at the edge) and the
-    position is tracked from there."""
+    """Relative, like a trackpad with acceleration: slow hand movement moves the pointer precisely
+    (`slow_gain`), a quick flick covers the screen (`fast_gain`), so corners are reachable without
+    moving your hand out of view. The hand position is jitter-filtered first (One Euro).
+    Gains are pointer pixels per full frame width of hand travel; speeds are frame widths per second."""
 
-    def __init__(self, screen, box=0.6, min_cutoff=1.0, beta=0.007):
-        self.w, self.h = screen
-        self.box, self.min_cutoff, self.beta = box, min_cutoff, beta
-        self.pos = None
+    def __init__(self, slow_gain=1200, fast_gain=6000, slow_speed=0.2, fast_speed=1.5,
+                 min_cutoff=1.0, beta=0.02, frame=(640, 480)):
+        self.slow_gain, self.fast_gain = slow_gain, fast_gain
+        self.slow_speed, self.fast_speed = slow_speed, fast_speed
+        self.min_cutoff, self.beta, self.frame = min_cutoff, beta, frame
 
-    def target(self, hand):
-        clamp = lambda v: min(max(v, 0.0), 1.0)
-        u = clamp(((1 - hand[0]) - 0.5) / self.box + 0.5)  # mirrored: hand to your right = pointer right
-        v = clamp((hand[1] - 0.5) / self.box + 0.5)
-        return u * (self.w - 1), v * (self.h - 1)
+    def px(self, hand):
+        return hand[0] * self.frame[0], hand[1] * self.frame[1]  # filter in camera pixels
 
     def start(self, hand, now):
-        """Returns the relative moves to send: into the top-left corner, then to the hand's spot."""
         self.filter = OneEuro(self.min_cutoff, self.beta)
-        self.pos = self.filter(self.target(hand), now)
-        return [(-4 * self.w, -4 * self.h), self.pos]
+        self.pos, self.t = self.filter(self.px(hand), now), now
 
     def update(self, hand, now):
-        x, y = self.filter(self.target(hand), now)
-        dx, dy = x - self.pos[0], y - self.pos[1]
-        self.pos = (x, y)
-        return dx, dy
+        x, y = self.filter(self.px(hand), now)
+        dx, dy = self.pos[0] - x, y - self.pos[1]  # mirrored: hand to your right = pointer right
+        dt, self.pos, self.t = max(now - self.t, 1e-3), (x, y), now
+        speed = math.hypot(dx, dy) / self.frame[0] / dt
+        f = min(max((speed - self.slow_speed) / (self.fast_speed - self.slow_speed), 0.0), 1.0)
+        gain = (self.slow_gain + f * (self.fast_gain - self.slow_gain)) / self.frame[0]
+        return dx * gain, dy * gain
