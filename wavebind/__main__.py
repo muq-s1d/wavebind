@@ -33,7 +33,7 @@ def actions(cfg):
     from . import inject
 
     remember = cfg.get("remember_key_permission", True)
-    return inject.Actions(cfg["bindings"], PORTAL_TOKEN, remember, pointer="pinch" in cfg or "pointer" in cfg)
+    return inject.Actions(cfg["bindings"], PORTAL_TOKEN, remember, pointer="pinch" in cfg)
 
 
 def setup(args):
@@ -105,111 +105,61 @@ def run(args):
     path, cfg = load_config()
     try:
         act = actions(cfg)
-        thresholds = {k: v for k, v in cfg.get("pinch", {}).items() if k in ("on", "off", "frames")}
-        pinch = drag = pointer = None
+        repeat = {g: b["repeat"] for g, b in cfg["bindings"].items() if "repeat" in b}
+        eng = engine.Engine(cfg["bindings"], repeat, **cfg.get("engine", {}))
+        swipe = engine.Swipe(**cfg.get("swipe", {}))
+        pinch = drag = None
         if "pinch" in cfg:
             p = dict(cfg["pinch"])
             drag_keys = inject.parse_keys(p.pop("modifier", "super"))
-            for k in thresholds:
-                p.pop(k)
-            pinch = engine.Pinch(**thresholds)
+            pinch = engine.Pinch(p.pop("on", 0.25), p.pop("off", 0.45), p.pop("frames", 3))
             drag = engine.Drag(**p)  # leftover (misspelled) keys raise TypeError
-        if "pointer" in cfg:
-            q = dict(cfg["pointer"])
-            pointer_gesture, lost_after = q.pop("gesture", "Pointing_Up"), q.pop("lost_after", 0.5)
-            pointer_fps = q.pop("fps", 30)
-            click = engine.Pinch(q.pop("click_on", 0.3), q.pop("click_off", 0.45), frames=1)  # quick pinches count
-            pointer = engine.Pointer(**q)
-        gestures = list(cfg["bindings"]) + ([pointer_gesture] if pointer else [])
-        repeat = {g: b["repeat"] for g, b in cfg["bindings"].items() if "repeat" in b}
-        eng = engine.Engine(gestures, repeat, **cfg.get("engine", {}))
-        swipe = engine.Swipe(**cfg.get("swipe", {}))
     except (TypeError, ValueError) as e:
         sys.exit(f"bad config {path}: {e}")
     print(f"config {path}\nhold an open palm to arm, then make a gesture. {'q in the window' if args.preview else 'Ctrl+C'} quits.")
-    fired, fired_at, was_armed, window_open = None, 0, False, False
-    dragging = pointing = pressed = False  # window drag / pointer mode / left button held in pointer mode
-    seen_at = 0.0
-    rates = {"fps": cfg.get("fps", 15), "idle_fps": cfg.get("idle_fps", 5)}
+    fired, fired_at, was_armed, window_open, dragging = None, 0, False, False, False
     tips = lambda h: ((h[4].x + h[8].x) / 2, (h[4].y + h[8].y) / 2)  # between thumb and index tip
-    knuckle = lambda h: (h[5].x, h[5].y)  # index knuckle: stays put when the fingertip pinches
-
-    def stop_pointing(why):
-        nonlocal pointing, pressed
-        if pressed:
-            pressed = False
-            act.input().drag([], False)
-        pointing = False
-        rates["fps"] = cfg.get("fps", 15)
-        eng.disarm()
-        print(f"pointer off ({why})")
-
     try:
-        for now, label, wrist, frame, hand in vision.stream(MODEL, args.camera, rates):
-            gesture, pinching = None, False
-            if pointing:  # mouse follows the hand, pinch = left button; lower the hand to stop
-                try:
-                    if hand is None:
-                        if now - seen_at > lost_after:
-                            stop_pointing("hand out of view")
-                    else:
-                        seen_at = now
-                        act.input().move(*pointer.update(knuckle(hand), now))
-                        down = click.update(hand)
-                        if down != pressed:
-                            act.input().drag([], down)
-                            pressed = down
-                except Exception as e:
-                    print(f"pointer failed: {e}", file=sys.stderr)
-                    stop_pointing("error")
+        for now, label, wrist, frame, hand in vision.stream(MODEL, args.camera, cfg.get("fps", 15), cfg.get("idle_fps", 5)):
+            gesture = None
+            closed = pinch.update(hand) if pinch else False
+            pinching = closed and (dragging or label != "Closed_Fist")  # a fist's thumb rests near the index tip
+            try:
+                if dragging and not closed:
+                    dragging = False
+                    act.input().drag(drag_keys, False)
+                    eng.pause(now, eng.swipe_cooldown)  # lowering the hand after a drop is not a swipe
+                    print("dropped")
+                elif dragging:
+                    act.input().move(*drag.update(tips(hand)))
+                elif pinching and eng.armed and not eng.cooling(now):
+                    act.input().drag(drag_keys, True)
+                    dragging = True
+                    drag.start(tips(hand))
+                    print("dragging")
+            except Exception as e:
+                print(f"pinch-drag failed: {e}", file=sys.stderr)
+                pinch = None  # stop trying; the finally below releases anything still held
+            if dragging or pinching:  # a pinch is never a gesture or a swipe
+                if eng.armed:
+                    eng.keep_armed(now)
+                swipe.update(wrist, now, active=False)
             else:
-                closed = pinch.update(hand) if pinch else False
-                pinching = closed and (dragging or label != "Closed_Fist")  # a fist's thumb rests near the index tip
-                try:
-                    if dragging and not closed:
-                        dragging = False
-                        act.input().drag(drag_keys, False)
-                        eng.pause(now, eng.swipe_cooldown)  # lowering the hand after a drop is not a swipe
-                        print("dropped")
-                    elif dragging:
-                        act.input().move(*drag.update(tips(hand)))
-                    elif pinching and eng.armed and not eng.cooling(now):
-                        act.input().drag(drag_keys, True)
-                        dragging = True
-                        drag.start(tips(hand))
-                        print("dragging")
-                except Exception as e:
-                    print(f"pinch-drag failed: {e}", file=sys.stderr)
-                    pinch = None  # stop trying; the finally below releases anything still held
-                if dragging or pinching:  # a pinch is never a gesture or a swipe
-                    if eng.armed:
-                        eng.keep_armed(now)
-                    swipe.update(wrist, now, active=False)
-                else:
-                    tracking = eng.armed and not eng.cooling(now)  # no swipes during cooldown: the hand is moving back
-                    gesture = eng.update(swipe.update(wrist, now, tracking) or label, now)
+                tracking = eng.armed and not eng.cooling(now)  # no swipes during cooldown: the hand is moving back
+                gesture = eng.update(swipe.update(wrist, now, tracking) or label, now)
             if eng.armed and not was_armed:
                 print("armed")
             was_armed = eng.armed
             if gesture:
                 fired, fired_at = gesture, now
-                if pointer and gesture == pointer_gesture:
-                    pointing, seen_at = True, now
-                    rates["fps"] = pointer_fps  # full speed while pointing: smoother, and quick pinches aren't missed
-                    click.update(None)  # start with the button up
-                    pointer.start(knuckle(hand), now)
-                    print("pointer on")
-                else:
-                    try:
-                        act.fire(gesture)
-                        print(f"fired {gesture}")
-                    except Exception as e:
-                        print(f"{gesture} failed: {e}", file=sys.stderr)
+                try:
+                    act.fire(gesture)
+                    print(f"fired {gesture}")
+                except Exception as e:
+                    print(f"{gesture} failed: {e}", file=sys.stderr)
             if args.preview:
                 shown = fired if now - fired_at < 1.5 else None
-                state = "pointer" if pointing else "dragging" if dragging else eng.state(now)
-                shown_label = ("click" if pressed else "move") if pointing else "pinch" if pinching else label
-                image = vision.draw(frame, hand, shown_label, state, shown)
+                image = vision.draw(frame, hand, "pinch" if pinching else label, "dragging" if dragging else eng.state(now), shown)
                 if window_open:
                     cv2.imshow("wavebind", image)
                 else:
@@ -223,11 +173,9 @@ def run(args):
         pass
     except RuntimeError as e:
         sys.exit(f"error: {e}")
-    finally:  # never leave Super or a mouse button held down
-        if dragging:
+    finally:
+        if dragging:  # never leave Super or the mouse button held down
             act.input().drag(drag_keys, False)
-        if pressed:
-            act.input().drag([], False)
 
 
 def main():
