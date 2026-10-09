@@ -75,10 +75,13 @@ def check(args):
     print(f"config      {path}   bindings: {', '.join(cfg['bindings'])}")
     ok_model = model_ok()
     print(f"model       {MODEL} {'ok' if ok_model else 'MISSING or corrupt, run: wavebind setup'}")
-    cap = cv2.VideoCapture(args.camera)
+    from .vision import quiet_stderr
+
+    with quiet_stderr():  # OpenCV logs its own errors for a busy camera; the camera line below says it plainly
+        cap = cv2.VideoCapture(args.camera)
     ok, frame = cap.read()
     cap.release()
-    print(f"camera {args.camera}    {'%dx%d' % (frame.shape[1], frame.shape[0]) if ok else 'FAILED to read a frame'}")
+    print(f"camera {args.camera}    {'%dx%d' % (frame.shape[1], frame.shape[0]) if ok else 'FAILED to read a frame (in use by another app?)'}")
     backend = inject.detect(PORTAL_TOKEN, cfg.get("remember_key_permission", True))
     print(f"keys        {backend.name if backend else 'NONE: install xdotool (X11) or wtype (wlroots)'}")
     if args.type and backend:
