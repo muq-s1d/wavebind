@@ -37,10 +37,10 @@ Default bindings (GNOME shortcuts; all changeable in the config):
 | swipe up / down | overview / minimize window |
 | ✊ `Closed_Fist` | play / pause |
 | 👍 `Thumb_Up` / 👎 `Thumb_Down` | volume up / down, repeats while held |
+| ☝ `Pointing_Up` | maximize / restore |
 | ✌ `Victory` | screenshot tool |
-| 🤟 `ILoveYou` | maximize / restore |
+| 🤟 `ILoveYou` | show desktop |
 | 🤏 pinch + move | drag the window under the mouse pointer; open your fingers to drop |
-| ☝ `Pointing_Up` | pointer mode: the mouse follows your hand, pinch to click (hold to drag or select); lower your hand to stop |
 
 `Open_Palm` is the arm gesture.
 
@@ -68,7 +68,7 @@ for it.
 
 - **GNOME / KDE:** the desktop shows a "Remote Desktop" dialog. Despite the name, nothing goes over the
   network and nothing can see your screen: wavebind asks for the keyboard, plus the mouse pointer only
-  if the `[pinch]` or `[pointer]` section is in your config, through the local xdg-desktop-portal. GNOME shows an
+  if the `[pinch]` section is in your config, through the local xdg-desktop-portal. GNOME shows an
   indicator in the top bar while it is active.
 - `remember_key_permission = true` (default): allow once. The grant is saved to
   `~/.local/share/wavebind/portal_token` (readable only by you) so later launches don't ask.

@@ -31,9 +31,6 @@ class Engine:
     def keep_armed(self, now):
         self.armed_until = now + self.armed_for
 
-    def disarm(self):
-        self.armed_until = self.palm_since = None
-
     def pause(self, now, seconds):
         self.cooldown_until = now + seconds
 
@@ -170,54 +167,3 @@ class Drag:
         self.pos = (x, y)
         return dx, dy
 
-
-class OneEuro:
-    """One Euro filter (Casiez et al., CHI 2012) for a point: heavy smoothing when moving slowly
-    (steady enough for small buttons), little when moving fast (no lag on big moves).
-    min_cutoff (Hz): lower = steadier at rest. beta: higher = less lag when moving fast."""
-
-    def __init__(self, min_cutoff=1.0, beta=0.007, d_cutoff=1.0):
-        self.min_cutoff, self.beta, self.d_cutoff = min_cutoff, beta, d_cutoff
-        self.prev = None
-
-    def __call__(self, x, now):
-        if self.prev is None:
-            self.prev, self.speed, self.t = x, (0.0,) * len(x), now
-            return x
-        dt = max(now - self.t, 1e-3)
-        self.t = now
-        alpha = lambda cutoff: 1 / (1 + 1 / (2 * math.pi * cutoff * dt))
-        a = alpha(self.d_cutoff)
-        self.speed = tuple(a * (xi - pi) / dt + (1 - a) * si for xi, pi, si in zip(x, self.prev, self.speed))
-        a = alpha(self.min_cutoff + self.beta * math.hypot(*self.speed))
-        self.prev = tuple(a * xi + (1 - a) * pi for xi, pi in zip(x, self.prev))
-        return self.prev
-
-
-class Pointer:
-    """Relative, like a trackpad with acceleration: slow hand movement moves the pointer precisely
-    (`slow_gain`), a quick flick covers the screen (`fast_gain`), so corners are reachable without
-    moving your hand out of view. The hand position is jitter-filtered first (One Euro).
-    Gains are pointer pixels per full frame width of hand travel; speeds are frame widths per second."""
-
-    def __init__(self, slow_gain=1200, fast_gain=6000, slow_speed=0.2, fast_speed=1.5,
-                 min_cutoff=1.0, beta=0.02, frame=(640, 480)):
-        self.slow_gain, self.fast_gain = slow_gain, fast_gain
-        self.slow_speed, self.fast_speed = slow_speed, fast_speed
-        self.min_cutoff, self.beta, self.frame = min_cutoff, beta, frame
-
-    def px(self, hand):
-        return hand[0] * self.frame[0], hand[1] * self.frame[1]  # filter in camera pixels
-
-    def start(self, hand, now):
-        self.filter = OneEuro(self.min_cutoff, self.beta)
-        self.pos, self.t = self.filter(self.px(hand), now), now
-
-    def update(self, hand, now):
-        x, y = self.filter(self.px(hand), now)
-        dx, dy = self.pos[0] - x, y - self.pos[1]  # mirrored: hand to your right = pointer right
-        dt, self.pos, self.t = max(now - self.t, 1e-3), (x, y), now
-        speed = math.hypot(dx, dy) / self.frame[0] / dt
-        f = min(max((speed - self.slow_speed) / (self.fast_speed - self.slow_speed), 0.0), 1.0)
-        gain = (self.slow_gain + f * (self.fast_gain - self.slow_gain)) / self.frame[0]
-        return dx * gain, dy * gain

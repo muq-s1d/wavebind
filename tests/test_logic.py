@@ -296,42 +296,5 @@ class DragTest(unittest.TestCase):
         self.assertAlmostEqual(total, 100, places=3)  # same total travel, just spread out
 
 
-class PointerTest(unittest.TestCase):
-    def test_filter_steady_when_jittering(self):
-        f = engine.OneEuro()
-        out = [f((500 + (3 if i % 2 else -3), 500), i / 30)[0] for i in range(60)]  # +-3 px jitter at 30 fps
-        self.assertLess(max(out[30:]) - min(out[30:]), 2)  # filtered spread under 2 px (raw: 6 px)
-
-    def test_filter_follows_fast_moves(self):
-        f = engine.OneEuro()
-        for i in range(30):
-            f((0.0, 0.0), i / 30)
-        for i in range(30, 45):  # jump 1000 px and hold for 0.5 s
-            x = f((1000.0, 0.0), i / 30)[0]
-        self.assertGreater(x, 950)
-
-    def test_slow_is_precise_fast_covers_screen(self):
-        def travel(seconds):  # hand moves 0.1 frame widths to your right over `seconds`, 30 fps
-            ptr = engine.Pointer(min_cutoff=1000)  # filter effectively off, to test the gain curve alone
-            ptr.start((0.5, 0.5), 0.0)
-            steps = round(seconds * 30)
-            return sum(ptr.update((0.5 - 0.1 * i / steps, 0.5), i / 30)[0] for i in range(1, steps + 1))
-        slow, fast = travel(2.0), travel(0.1)  # 0.05 vs 1.0 frame widths per second
-        self.assertAlmostEqual(slow, 120, delta=1)  # 0.1 * slow_gain 1200
-        self.assertAlmostEqual(fast, 415.4, delta=2)  # 1.0 fw/s (minus a hair of filter lag): gain 1200 + (0.8 / 1.3) * 4800 = 4154
-        self.assertGreater(slow, 0)  # moved to your right -> pointer right
-
-    def test_vertical(self):
-        ptr = engine.Pointer(min_cutoff=1000)
-        ptr.start((0.5, 0.5), 0.0)
-        dx, dy = ptr.update((0.5, 0.55), 1.0)
-        self.assertAlmostEqual(dx, 0)
-        self.assertGreater(dy, 0)  # hand down -> pointer down
-
-    def test_quick_click(self):
-        p = engine.Pinch(0.3, 0.45, frames=1)
-        self.assertEqual([p.update(hand(d)) for d in (0.15, 0.05, 0.15)], [False, True, False])  # one-frame pinch
-
-
 if __name__ == "__main__":
     unittest.main()
