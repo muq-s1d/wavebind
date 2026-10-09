@@ -28,7 +28,8 @@ def stream(model, camera=0, fps=15, idle_fps=5):
     """Yield (now, label, wrist, frame, landmarks) at most `fps` times per second, `idle_fps` while
     no hand is visible. wrist is (x, y) in 0..1 image coordinates. label/wrist/landmarks are None with no hand. Skipped frames are grabbed,
     not decoded, to save CPU."""
-    cap = cv2.VideoCapture(camera)
+    with quiet_stderr():  # OpenCV logs its own errors for a busy camera; ours below is clearer
+        cap = cv2.VideoCapture(camera)
     if not cap.isOpened():
         raise RuntimeError(f"can't open camera {camera} (in use by another app?)")
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
@@ -67,7 +68,7 @@ def stream(model, camera=0, fps=15, idle_fps=5):
 
 
 COLORS = {"idle": (160, 160, 160), "arming": (0, 200, 255), "armed": (0, 220, 0), "cooldown": (255, 120, 0),
-          "dragging": (255, 0, 255)}
+          "dragging": (255, 0, 255), "pointer": (255, 255, 0)}
 
 
 def draw(frame, hand, label, state, fired=None):

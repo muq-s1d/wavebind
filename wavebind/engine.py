@@ -31,6 +31,9 @@ class Engine:
     def keep_armed(self, now):
         self.armed_until = now + self.armed_for
 
+    def disarm(self):
+        self.armed_until = self.palm_since = None
+
     def pause(self, now, seconds):
         self.cooldown_until = now + seconds
 
